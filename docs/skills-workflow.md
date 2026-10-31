@@ -4,6 +4,10 @@
 
 2026-10-31用户要求：本项目只要修改代码就必须使用Addy技能。已写入根目录`AGENTS.md`并提交；适用于主代理、委派代理、测试、脚本与构建改动。按改动选择并读取相关技能，记录验证与独立审查，不因改动小而跳过。规则不意味着每次预加载所有技能。
 
+## 1.6.0 实际应用
+
+使用using-agent-skills路由、incremental-implementation、test-driven-development、frontend-ui-engineering、code-review-and-quality和git-workflow-and-versioning。先用500种子模型回归及设备同屏断言确认旧行为失败，再分别实现三单/地址目标与紧凑布局；生成器和页面由作者以外的代理独立审查，模拟器运行证据见`verification-1.6.0.md`。浮标缩放/吸边/可见度和电话计时也采用模型及原生RED→GREEN回归；验证实际显示文本推进、同状态/透明度不重计、关闭清空、三击与音量键，互审生命周期和回调清理。发布继续保留旧tag/Release。
+
 ## 1.5.0 实际应用
 
 - using-agent-skills / spec-driven-development：按用户已确认的手动测试方式界定能力与测量语义，规格见`docs/spec-1.5.0.md`。
