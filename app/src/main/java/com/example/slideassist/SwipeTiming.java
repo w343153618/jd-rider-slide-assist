@@ -7,7 +7,8 @@ final class SwipeTiming {
     private SwipeTiming() {}
 
     static int normalize(int value) {
-        return value == 100 || value == 150 || value == 200 || value == 450 || value == 700
+        return value == 50 || value == 60 || value == 70 || value == 80 || value == 90
+                || value == 100 || value == 150 || value == 200 || value == 450 || value == 700
                 ? value : DEFAULT_MILLIS;
     }
 }

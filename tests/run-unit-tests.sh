@@ -12,3 +12,4 @@ java -cp "$classes_dir" com.example.slideassist.SwipeTimingTest
 sh "$project_dir/tests/run-slider-geometry-tests.sh"
 sh "$project_dir/tests/run-interaction-tests.sh"
 sh "$project_dir/tests/run-triple-tap-tests.sh"
+sh "$project_dir/tests/run-reaction-tests.sh"
