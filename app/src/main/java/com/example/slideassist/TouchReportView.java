@@ -95,10 +95,11 @@ public final class TouchReportView extends View {
 
     private void timeline(Canvas c, float top) {
         text(c, "阶段时间轴 · 相对按下（ms）", 8, top + 10, INK, 14);
-        String[] keys = "manual".equals(trace.kind) ? new String[]{"down", "first_move", "target", "finish"}
+        boolean manual = "manual".equals(trace.kind) || "reaction_manual".equals(trace.kind);
+        String[] keys = manual ? new String[]{"down", "first_move", "target", "finish"}
                 : "demo_assist".equals(trace.kind) ? new String[]{"down", "trigger", "animation_started", "finish"}
                 : new String[]{"down", "trigger", "dispatch", "finish"};
-        String[] labels = "manual".equals(trace.kind) ? new String[]{"按下", "首次位移", "到达98%", "结束"}
+        String[] labels = manual ? new String[]{"按下", "首次位移", "到达98%", "结束"}
                 : "demo_assist".equals(trace.kind) ? new String[]{"按下", "触发", "动画开始", "结果"}
                 : new String[]{"按下", "触发", "手势派发", "结果"};
         double span = Math.max(1, duration(trace));
