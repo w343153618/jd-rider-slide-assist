@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityEvent;
 
 /** A self-contained practice control. It never communicates with an order service. */
 public final class DemoSliderView extends View {
+    private static final long RESET_DELAY_MILLIS = 200;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final float density;
     private final float slop;
@@ -34,6 +35,10 @@ public final class DemoSliderView extends View {
     private InteractionRecorder.Trace animationTrace;
     private SliderGeometry.Swipe lastAssistedPath;
     private SliderGeometry.Swipe pendingAssistedPath;
+    private long completionCount;
+    private int physicalPointers;
+    private boolean waitingForReset;
+    private final Runnable automaticReset = () -> resetVisualState(false);
 
     public DemoSliderView(Context context) {
         super(context);
@@ -54,13 +59,18 @@ public final class DemoSliderView extends View {
     }
 
     private void updateDescription() {
-        setContentDescription(completed ? "模拟抢单成功，可点击重置练习再次尝试" :
+        setContentDescription(completed ? "模拟抢单成功，抬手后0.2秒自动复位" :
+                waitingForReset ? "本次练习结束，抬手后0.2秒自动复位" :
                 !assistanceEnabled ? "练习辅助已关闭，可从左侧白箭头内手动拖动滑条" :
                 immediate ? "模拟抢单滑条。左侧白箭头内单指按下立即模拟抢单" :
                 release ? "模拟抢单滑条。左侧白箭头内按下后抬起手指模拟抢单" : "模拟抢单滑条。从左侧白箭头内双击、双指轻点或向右滑动");
     }
 
     public void setOnComplete(Runnable callback) { onComplete = callback; }
+    public long getCompletionCount() { return completionCount; }
+    public boolean isReadyForAttempt() {
+        return !waitingForReset && !completed && physicalPointers == 0 && (animator == null || !animator.isRunning());
+    }
 
     public void setSwipeDurationMillis(int duration) {
         swipeDurationMillis = SwipeTiming.normalize(duration);
@@ -75,11 +85,19 @@ public final class DemoSliderView extends View {
     }
 
     public void reset() {
+        removeCallbacks(automaticReset);
         if (animator != null) animator.cancel();
         finishTrace(touchTrace, "cancelled"); touchTrace = null;
+        physicalPointers = 0;
+        resetVisualState(true);
+    }
+
+    private void resetVisualState(boolean clearPath) {
+        if (physicalPointers != 0) return;
         completed = false;
+        waitingForReset = false;
         progress = 0;
-        lastAssistedPath = null;
+        if (clearPath) lastAssistedPath = null;
         pendingAssistedPath = null;
         previousTapUp = 0;
         releasePointer = -1;
@@ -118,15 +136,20 @@ public final class DemoSliderView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         int action = event.getActionMasked();
-        if (completed || (animator != null && animator.isRunning())) {
+        physicalPointers = action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL ? 0
+                : action == MotionEvent.ACTION_POINTER_UP ? event.getPointerCount() - 1 : event.getPointerCount();
+        if (waitingForReset || completed || (animator != null && animator.isRunning())) {
+            if (action == MotionEvent.ACTION_DOWN) removeCallbacks(automaticReset);
             if (action != MotionEvent.ACTION_DOWN) TouchCapture.append(animationTrace, event, event.findPointerIndex(firstId));
             if ((action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) && getParent() != null)
                 getParent().requestDisallowInterceptTouchEvent(false);
+            if (waitingForReset && physicalPointers == 0) scheduleReset();
             return true;
         }
         if (action != MotionEvent.ACTION_DOWN) TouchCapture.append(touchTrace, event, event.findPointerIndex(firstId));
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                removeCallbacks(automaticReset);
                 finishTrace(touchTrace, "cancelled");
                 touchTrace = TouchCapture.begin("demo_assist", event, 0, density);
                 if (touchTrace != null) touchTrace.mark("down", event.getEventTime());
@@ -199,10 +222,10 @@ public final class DemoSliderView extends View {
                 long duration = event.getEventTime() - downTime;
                 if (hadSecond) {
                     if (assistanceEnabled && !invalid && !moved && duration <= 500 && inside(event.getX(), event.getY())) completeAssisted();
-                    else { finishTouch("ignored"); if (progress > 0) animateTo(0, false, null); }
+                    else { finishTouch("ignored"); if (progress > 0) returnAfterResult(); }
                 } else if (dragging) {
                     if (progress >= 0.85f) completeManual();
-                    else { finishTouch("incomplete"); animateTo(0, false, null); }
+                    else { finishTouch("incomplete"); returnAfterResult(); }
                 } else if (assistanceEnabled && !invalid && !moved && duration <= 350 && inside(event.getX(), event.getY())) {
                     long sincePrevious = downTime - previousTapUp;
                     if (previousTapUp != 0 && sincePrevious >= 0 && sincePrevious <= ViewConfiguration.getDoubleTapTimeout()
@@ -223,7 +246,7 @@ public final class DemoSliderView extends View {
                 previousTapUp = 0;
                 releasePointer = -1;
                 finishTouch("cancelled");
-                if (progress > 0) animateTo(0, false, null);
+                if (progress > 0) returnAfterResult();
                 return true;
             default: return true;
         }
@@ -278,20 +301,36 @@ public final class DemoSliderView extends View {
             private boolean cancelled;
             @Override public void onAnimationCancel(android.animation.Animator animation) {
                 cancelled = true; finishTrace(trace, "cancelled");
+                if (animationTrace == trace) animationTrace = null;
             }
             @Override public void onAnimationEnd(android.animation.Animator animation) {
                 if (finish && !cancelled) {
                     finishTrace(trace, "animation_completed");
                     if (animationTrace == trace) animationTrace = null;
                     completed = true;
-                    setContentDescription("模拟抢单成功，可点击重置练习再次尝试");
+                    waitingForReset = true;
+                    completionCount++;
+                    updateDescription();
                     sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED);
                     invalidate();
+                    scheduleReset();
                     if (onComplete != null) onComplete.run();
                 }
             }
         });
         animator.start();
+    }
+
+    private void scheduleReset() {
+        removeCallbacks(automaticReset);
+        if (waitingForReset && physicalPointers == 0) postDelayed(automaticReset, RESET_DELAY_MILLIS);
+    }
+
+    private void returnAfterResult() {
+        waitingForReset = true;
+        updateDescription();
+        invalidate();
+        scheduleReset();
     }
 
     @Override public boolean performClick() {
@@ -300,8 +339,11 @@ public final class DemoSliderView extends View {
     }
 
     @Override protected void onDetachedFromWindow() {
+        removeCallbacks(automaticReset);
         if (animator != null) animator.cancel();
         finishTouch("cancelled");
+        physicalPointers = 0;
+        resetVisualState(false);
         super.onDetachedFromWindow();
     }
 }

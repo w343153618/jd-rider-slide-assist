@@ -11,10 +11,33 @@ import android.view.View;
 
 /** Manual-only measurement surface. It never dispatches a gesture or contacts a service. */
 public final class ManualSpeedSliderView extends View {
+    private static final long RESET_DELAY_MILLIS = 200;
+    public interface AttemptListener {
+        void onStarted(long downTimeMillis, boolean validStart);
+        void onFinished(AttemptInfo info);
+    }
+    /** Immutable result survives visual reset and exists even when raw recording is disabled. */
+    public static final class AttemptInfo {
+        public final long downTimeMillis, firstMoveTimeMillis, targetTimeMillis, finishedTimeMillis;
+        public final boolean validStart;
+        public final String outcome;
+        public final InteractionRecorder.TraceSnapshot trace;
+        private AttemptInfo(long down, long moved, long target, long finished, boolean valid,
+                            String outcome, InteractionRecorder.TraceSnapshot trace) {
+            downTimeMillis = down; firstMoveTimeMillis = moved; targetTimeMillis = target;
+            finishedTimeMillis = finished; validStart = valid; this.outcome = outcome; this.trace = trace;
+        }
+    }
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final float density;
     private InteractionRecorder.Trace trace;
     private Runnable listener;
+    private AttemptListener attemptListener;
+    private String recordingKind = "manual";
+    private long downTimeMillis, firstMoveTimeMillis = -1, targetTimeMillis = -1, attemptCount;
+    private AttemptInfo lastAttempt;
+    private int physicalPointers;
+    private final Runnable automaticReset = this::resetVisualState;
     private int pointer = -1;
     private float startX, startY, progress;
     private boolean validStart, multiTouch, reached, moved, finished, successful;
@@ -28,8 +51,24 @@ public final class ManualSpeedSliderView extends View {
     }
 
     public void setOnAttemptFinished(Runnable value) { listener = value; }
+    public void setAttemptListener(AttemptListener value) { attemptListener = value; }
+    public void setRecordingKind(String kind) {
+        if (!"manual".equals(kind) && !"reaction_manual".equals(kind))
+            throw new IllegalArgumentException("A manual slider requires a manual measurement kind");
+        recordingKind = kind;
+    }
+    public boolean isReadyForAttempt() { return !finished && pointer == -1 && physicalPointers == 0; }
+    public long getAttemptCount() { return attemptCount; }
+    public AttemptInfo getLastAttempt() { return lastAttempt; }
     public void reset() {
+        removeCallbacks(automaticReset);
         cancelAttempt();
+        removeCallbacks(automaticReset);
+        physicalPointers = 0;
+        resetVisualState();
+    }
+    private void resetVisualState() {
+        if (physicalPointers != 0) return;
         pointer = -1;
         progress = 0;
         finished = successful = false;
@@ -38,6 +77,7 @@ public final class ManualSpeedSliderView extends View {
         invalidate();
     }
     public void cancelAttempt() {
+        physicalPointers = 0;
         if (pointer != -1) finish("cancelled", SystemClock.uptimeMillis());
     }
 
@@ -64,17 +104,26 @@ public final class ManualSpeedSliderView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         int action = event.getActionMasked();
+        physicalPointers = action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL ? 0
+                : action == MotionEvent.ACTION_POINTER_UP ? event.getPointerCount() - 1 : event.getPointerCount();
+        if (finished) {
+            if (action == MotionEvent.ACTION_DOWN) removeCallbacks(automaticReset);
+            if (physicalPointers == 0) scheduleReset();
+            return true;
+        }
         if (action == MotionEvent.ACTION_DOWN) {
-            if (finished) return true;
+            removeCallbacks(automaticReset);
             pointer = event.getPointerId(0);
             startX = event.getX(); startY = event.getY();
+            downTimeMillis = event.getEventTime(); firstMoveTimeMillis = targetTimeMillis = -1;
             validStart = geometry().inHandle(startX, startY);
             multiTouch = reached = moved = false;
-            trace = TouchCapture.begin("manual", event, 0, density);
+            trace = TouchCapture.begin(recordingKind, event, 0, density);
             result = validStart ? "拖到右端后抬手" : "起点在白色手柄外";
             // Android ViewParent contract: keep a valid drag from becoming ScrollView scrolling.
             // https://developer.android.com/reference/android/view/ViewParent#requestDisallowInterceptTouchEvent(boolean)
             if (validStart && getParent() != null) getParent().requestDisallowInterceptTouchEvent(true);
+            if (attemptListener != null) attemptListener.onStarted(downTimeMillis, validStart);
             invalidate();
             return true;
         }
@@ -106,12 +155,14 @@ public final class ManualSpeedSliderView extends View {
     private void position(float x, float y, long time) {
         if (!moved && (x != startX || y != startY)) {
             moved = true;
+            firstMoveTimeMillis = time;
             if (trace != null) trace.mark("first_move", time);
         }
         if (!validStart || multiTouch) return;
         progress = Math.max(0, Math.min(1, (x - startX) / Math.max(1, geometry().travel())));
         if (!reached && progress >= .98f) {
             reached = true;
+            targetTimeMillis = time;
             if (trace != null) trace.mark("target", time);
             result = "已到终点，抬手结束";
         }
@@ -119,6 +170,9 @@ public final class ManualSpeedSliderView extends View {
 
     private void finish(String outcome, long time) {
         if (trace != null) trace.finish(outcome, time);
+        lastAttempt = new AttemptInfo(downTimeMillis, firstMoveTimeMillis, targetTimeMillis, time,
+                validStart, outcome, trace == null ? null : trace.snapshot());
+        attemptCount++;
         trace = null;
         pointer = -1;
         finished = true;
@@ -126,10 +180,24 @@ public final class ManualSpeedSliderView extends View {
         result = "success".equals(outcome) ? "手动测试成功" : "incomplete".equals(outcome)
                 ? "未到终点" : "invalid_start".equals(outcome) ? "起点无效" :
                 "invalid_multitouch".equals(outcome) ? "多指无效" : "本次已取消";
-        setContentDescription(result + "，点击重置 / 下一次后继续");
+        setContentDescription(result + "，抬手后0.2秒自动复位，可继续下一次");
         if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
         invalidate();
+        scheduleReset();
+        if (attemptListener != null) attemptListener.onFinished(lastAttempt);
         if (listener != null) listener.run();
+    }
+
+    private void scheduleReset() {
+        removeCallbacks(automaticReset);
+        if (finished && physicalPointers == 0) postDelayed(automaticReset, RESET_DELAY_MILLIS);
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        cancelAttempt();
+        removeCallbacks(automaticReset);
+        resetVisualState();
+        super.onDetachedFromWindow();
     }
 
     private SliderGeometry geometry() { return new SliderGeometry(getWidth(), getHeight(), density); }
