@@ -212,8 +212,7 @@ public final class MainActivity extends Activity {
         };
         for (int i = 0; i < orders.length; i++) addOrder(page, orders[i], i + 1);
         demoBubble = new StatusBubbleView(this);
-        FrameLayout.LayoutParams bubblePosition = new FrameLayout.LayoutParams(dp(84), dp(48), Gravity.END | Gravity.TOP);
-        bubblePosition.topMargin = dp(160);
+        FrameLayout.LayoutParams bubblePosition = new FrameLayout.LayoutParams(dp(84), dp(48), Gravity.END | Gravity.CENTER_VERTICAL);
         content.addView(demoBubble, bubblePosition);
         demoBubble.setActive(demoAssistEnabled);
         demoBubble.setOnClickListener(v -> setDemoAssistEnabled(!demoAssistEnabled));
