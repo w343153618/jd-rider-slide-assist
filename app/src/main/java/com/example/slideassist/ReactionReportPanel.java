@@ -140,7 +140,7 @@ final class ReactionReportPanel extends LinearLayout {
     }
     private String grouped(ReactionSession.Snapshot snapshot) {
         StringBuilder b = new StringBuilder("按目标位次分组的成功总耗时均值：");
-        for (int slot = 0; slot < 6; slot++) {
+        for (int slot = 0; slot < ReactionOrderGenerator.TARGET_CANDIDATE_COUNT; slot++) {
             double sum = 0; int count = 0;
             for (ReactionSession.Round r : snapshot.rounds) if (r.batch.targetIndex == slot && r.winner() != null) { sum += r.totalMillis(); count++; }
             b.append(slot == 0 ? "" : "；").append(slot+1).append("单 ").append(count == 0 ? "无样本" : ms(sum/count)+"（n="+count+"）");

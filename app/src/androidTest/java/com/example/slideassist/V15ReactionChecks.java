@@ -36,12 +36,15 @@ public final class V15ReactionChecks {
         ReactionSession.Snapshot before = a.measurementSnapshot();
         check(before.rounds.size() == 1 && before.rounds.get(0).presentedTime >= 0, "presentation not marked");
         ReactionOrderGenerator.Batch batch = before.rounds.get(0).batch;
+        assertThreeOrdersFitViewport(i, a, batch);
         assertMarkerVisibility(i, a, batch);
-        drag(i, slider(a.getWindow().getDecorView(), (batch.targetIndex + 1) % 6));
+        drag(i, slider(a.getWindow().getDecorView(), (batch.targetIndex + 1) % batch.orders.size()));
+        assertThreeOrdersFitViewport(i, a, batch);
         drag(i, slider(a.getWindow().getDecorView(), batch.targetIndex));
         ReactionSession.Round completed = a.measurementSnapshot().rounds.get(0);
         check(completed.wrongAttempts == 1 && completed.winner() != null, "wrong / correct scoring broken");
         check(completed.searchMillis() >= 0 && completed.dragMillis() > 0, "separate timing missing");
+        assertThreeOrdersFitViewport(i, a, batch);
         SystemClock.sleep(250);
         drag(i, slider(a.getWindow().getDecorView(), batch.targetIndex));
         check(a.measurementSnapshot().rounds.get(0).attempts.get(2).practice,
@@ -56,8 +59,9 @@ public final class V15ReactionChecks {
         ReactionSession.Snapshot refreshed = a.measurementSnapshot();
         check(refreshed.rounds.size() == 2, "pull-to-refresh did not begin next round");
         ReactionOrderGenerator.Batch next = refreshed.rounds.get(1).batch;
+        assertThreeOrdersFitViewport(i, a, next);
         int markerCount = 0;
-        for (int n = 0; n < 6; n++) {
+        for (int n = 0; n < next.orders.size(); n++) {
             ReactionOrderGenerator.Order old = batch.orders.get(n), fresh = next.orders.get(n);
             check(!old.title.equals(fresh.title) && !old.address.equals(fresh.address) && !old.note.equals(fresh.note),
                     "every generated field must change");
@@ -94,6 +98,42 @@ public final class V15ReactionChecks {
         check(returned != null, "visible return did not open simulation");
         i.runOnMainSync(returned::finish); InteractionRecorder.stop(); InteractionRecorder.clear();
         result.putString("result", "PASS reaction: opt-in, pinned return, wrong/correct/once-per-round scoring, manual timing, pull refresh with changed fields and one marker, JSON/CSV, rotation and return");
+    }
+    private static void assertThreeOrdersFitViewport(Instrumentation i, ReactionTestActivity a,
+                                                    ReactionOrderGenerator.Batch batch) {
+        Throwable[] failure = {null};
+        i.runOnMainSync(() -> {
+            try {
+            check(batch.orders.size() == 3, "reaction page must contain exactly three orders");
+            check(batch.targetIndex < 2 && "address".equals(batch.targetField),
+                    "target must be an address character in the first or second order");
+            PullRefreshScrollView scroll = find(a.getWindow().getDecorView(), PullRefreshScrollView.class);
+            check(scroll != null && scroll.getScrollY() == 0, "three-order page must begin without scrolling");
+            Rect viewport = new Rect(); check(scroll.getGlobalVisibleRect(viewport), "practice viewport missing");
+            for (int n = 0; n < 3; n++) {
+                ManualSpeedSliderView slider = slider(a.getWindow().getDecorView(), n);
+                check(slider != null, "expected manual slider " + n);
+                check(slider.getHeight() >= Math.round(48 * slider.getResources().getDisplayMetrics().density),
+                        "manual slider must keep a 48dp touch surface");
+                View card = (View) slider.getParent();
+                int[] origin = new int[2]; card.getLocationOnScreen(origin);
+                Rect full = new Rect(origin[0], origin[1], origin[0] + card.getWidth(), origin[1] + card.getHeight());
+                check(viewport.contains(full), "all three complete order cards must fit one screen; order="
+                        + n + " card=" + full + " viewport=" + viewport);
+                TextView address = findText(card, batch.orders.get(n).address);
+                check(address != null && address.getLayout() != null, "address must be rendered in full");
+                for (int line = 0; line < address.getLayout().getLineCount(); line++)
+                    check(address.getLayout().getEllipsisCount(line) == 0, "address or target may not be ellipsized");
+                check(address.getHeight() - address.getTotalPaddingTop() - address.getTotalPaddingBottom()
+                                >= address.getLayout().getLineBottom(address.getLayout().getLineCount() - 1),
+                        "address lines must not be clipped");
+                check(address.getTextSize() / address.getResources().getDisplayMetrics().scaledDensity >= 12,
+                        "address font must remain readable");
+            }
+            check(slider(a.getWindow().getDecorView(), 3) == null, "a fourth order must not be created");
+            } catch (Throwable error) { failure[0] = error; }
+        });
+        if (failure[0] != null) throw new AssertionError(failure[0]);
     }
     private static void drag(Instrumentation i, ManualSpeedSliderView slider) {
         check(slider != null, "order slider missing");

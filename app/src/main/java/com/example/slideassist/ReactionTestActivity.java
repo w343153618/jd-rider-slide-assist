@@ -60,16 +60,20 @@ public final class ReactionTestActivity extends Activity {
         switchPage.setOnClickListener(v->{if(showingReport)showReport(false);else stopAndReport();});
         root.addView(bar,new LinearLayout.LayoutParams(-1,-2));
         scroll=new PullRefreshScrollView(this);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout page=column();page.setPadding(dp(16),dp(16),dp(16),dp(28));scroll.addView(page);setContentView(root);
+        LinearLayout page=column();page.setPadding(dp(12),dp(4),dp(12),dp(4));scroll.addView(page);setContentView(root);
         instructions=column();add(page,instructions,0);
-        add(instructions,text("搜索反应 · 手动滑动",13,ORANGE,true),0);
-        add(instructions,text("找到藏在订单里的“田”",24,INK,true),4);
-        add(instructions,text("先点开始测试，找出文字中含“田”的订单，再从它的白色手柄手动滑到右端。只有这一单计分；滑条结束0.2秒后自动复原。",14,MUTED,false),8);
+        add(instructions,compactText("找地址中的“田”，手动滑动对应订单。\n滑后0.2秒回位；下拉换3单。",12,INK,false),0);
         LinearLayout actions=new LinearLayout(this);start=button("开始测试");stop=button("停止并报告");
-        actions.addView(start,new LinearLayout.LayoutParams(0,dp(52),1));actions.addView(stop,new LinearLayout.LayoutParams(0,dp(52),1));add(instructions,actions,12);
-        status=text("尚未开始记录；可先试滑。开始测试会清空之前这组测试和本工具触摸记录。",13,INK,true);add(instructions,status,8);
-        pullHint=text("在列表顶部向下拉，松手换一组全新订单",13,ORANGE,false);add(instructions,pullHint,10);
-        orders=column();add(page,orders,8);
+        start.setContentDescription("开始测试并清空之前的本地测试记录");
+        actions.addView(start,new LinearLayout.LayoutParams(0,dp(48),1));actions.addView(stop,new LinearLayout.LayoutParams(0,dp(48),1));add(instructions,actions,0);
+        status=compactText("未记录 · 开始测试会清空旧记录",12,INK,true);status.setSingleLine(true);status.setEllipsize(android.text.TextUtils.TruncateAt.END);add(instructions,status,2);
+        pullHint=compactText("顶部下拉，松手换一组新订单",12,ORANGE,false);pullHint.setSingleLine(true);pullHint.setEllipsize(android.text.TextUtils.TruncateAt.END);add(instructions,pullHint,2);
+        orders=column();
+        // fillViewport stretches a short page. Weight shares only that spare space;
+        // natural wrapped text stays scrollable on short windows or with large fonts.
+        // https://developer.android.com/reference/android/widget/ScrollView#setFillViewport(boolean)
+        // https://developer.android.com/reference/android/widget/LinearLayout.LayoutParams#weight
+        page.addView(orders,new LinearLayout.LayoutParams(-1,-2,1));
         reportArea=column();add(page,reportArea,8);reportArea.setVisibility(View.GONE);
         report=new ReactionReportPanel(this);add(reportArea,report,0);
         LinearLayout exports=new LinearLayout(this);json=button("导出 JSON 全数据");csv=button("导出 CSV 轮次表");
@@ -79,7 +83,7 @@ public final class ReactionTestActivity extends Activity {
         json.setOnClickListener(v->export(EXPORT_JSON));csv.setOnClickListener(v->export(EXPORT_CSV));
         scroll.setListener(new PullRefreshScrollView.Listener(){
             @Override public void onPull(float fraction){
-                pullHint.setText(fraction>=1?"松手刷新，开始下一轮":fraction>0?"继续下拉以刷新":"在列表顶部向下拉，松手换一组全新订单");
+                pullHint.setText(fraction>=1?"松手刷新，开始下一轮":fraction>0?"继续下拉以刷新":"顶部下拉，松手换一组新订单");
             }
             @Override public void onRefresh(){if(!showingReport)refreshOrders();}
         });
@@ -93,7 +97,7 @@ public final class ReactionTestActivity extends Activity {
             report.restore(saved.getInt("selected",-1),saved.getDouble("cursor",0));
             int savedY=saved.getInt("scroll",0);scroll.post(()->scroll.scrollTo(0,savedY));
         }
-        if(!session.snapshot().rounds.isEmpty())status.setText("保留之前的本地测试数据；可查看报告。点击开始测试会清空旧会话并重新计时。");
+        if(!session.snapshot().rounds.isEmpty())status.setText("保留旧报告 · 开始测试会清空记录");
         updateButtons();
     }
     private void beginSession(){
@@ -104,10 +108,10 @@ public final class ReactionTestActivity extends Activity {
         cancelSliders();session.finishRound("refresh",SystemClock.uptimeMillis());
         ReactionOrderGenerator.Batch fresh=ReactionOrderGenerator.generate(System.nanoTime(),batch);
         if(running&&!session.beginRound(fresh)){
-            running=false;InteractionRecorder.stop();status.setText("已达到50轮上限，请查看或导出报告；开始测试可创建新会话。");showReport(true);updateButtons();return;
+            running=false;InteractionRecorder.stop();status.setText("已达50轮上限 · 请查看报告");showReport(true);updateButtons();return;
         }
         batch=fresh;renderOrders(running);scroll.scrollTo(0,0);updateButtons();
-        status.setText(running?"新订单准备中…":"新订单已生成；当前没有记录，点击开始测试后计时。");
+        status.setText(running?"新订单准备中…":"新订单已生成 · 开始测试后计时");
     }
     private void renderOrders(boolean markPresentation){
         final ReactionOrderGenerator.Batch displayed=batch;final int token=++generation;
@@ -115,25 +119,27 @@ public final class ReactionTestActivity extends Activity {
         orders.setVisibility(markPresentation?View.INVISIBLE:View.VISIBLE);
         for(int n=0;n<displayed.orders.size();n++){
             final int orderIndex=n;ReactionOrderGenerator.Order o=displayed.orders.get(n);
-            LinearLayout card=column();card.setPadding(dp(14),dp(14),dp(14),dp(14));
-            GradientDrawable bg=new GradientDrawable();bg.setColor(Color.WHITE);bg.setCornerRadius(dp(10));card.setBackground(bg);add(orders,card,12);
-            add(card,text(String.format(Locale.ROOT,"练习订单 %02d · 虚构",n+1),12,ORANGE,true),0);
-            TextView title=text(o.title,18,INK,true),address=text(o.address,15,INK,false),note=text(o.note,14,MUTED,false);
-            add(card,title,8);add(card,address,10);add(card,note,10);
+            LinearLayout card=column();card.setPadding(dp(10),dp(4),dp(10),dp(4));
+            card.setContentDescription("虚构练习订单"+(n+1));
+            GradientDrawable bg=new GradientDrawable();bg.setColor(Color.WHITE);bg.setCornerRadius(dp(8));card.setBackground(bg);
+            LinearLayout.LayoutParams cardParams=new LinearLayout.LayoutParams(-1,-2,1);cardParams.topMargin=dp(6);orders.addView(card,cardParams);
+            TextView title=compactText(String.format(Locale.ROOT,"%d · %s",n+1,o.title),14,INK,true),address=compactText(o.address,13,INK,false),note=compactText(o.note,12,MUTED,false);
+            add(card,title,0);add(card,address,1);add(card,note,1);
             // Render the target with the same style as its ordinary field; no hint in the slider label.
             if(n==displayed.targetIndex)targetText="title".equals(displayed.targetField)?title:"address".equals(displayed.targetField)?address:note;
             ManualSpeedSliderView slider=new ManualSpeedSliderView(this);slider.setTag(n);slider.setRecordingKind("reaction_manual");sliders.add(slider);
-            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(64));p.topMargin=dp(14);card.addView(slider,p);
+            card.addView(new View(this),new LinearLayout.LayoutParams(-1,0,1));
+            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(48));p.topMargin=dp(3);card.addView(slider,p);
             slider.setAttemptListener(new ManualSpeedSliderView.AttemptListener(){
                 @Override public void onStarted(long down,boolean valid){ }
                 @Override public void onFinished(ManualSpeedSliderView.AttemptInfo a){
                     if(!running||batch!=displayed)return;
                     session.recordAttempt(orderIndex,a.downTimeMillis,a.firstMoveTimeMillis,a.targetTimeMillis,a.finishedTimeMillis,a.validStart,a.outcome,a.trace);
                     ReactionSession.Snapshot snapshot=session.snapshot();ReactionSession.Round r=snapshot.rounds.get(snapshot.rounds.size()-1);
-                    if(r.winner()!=null)status.setText("本轮已计分：搜索 "+ms(r.searchMillis())+"，手动滑动 "+ms(r.dragMillis())+"，总耗时 "+ms(r.totalMillis())+"。下拉刷新后开始下一轮；本轮再滑只作练习。");
-                    else status.setText(!a.validStart?"这次起点在白色手柄外；本轮继续计时。":orderIndex!=displayed.targetIndex?"这次不是目标订单；本轮继续计时。":"尚未完成目标滑动；0.2秒回位后可再试，本轮继续计时。");
+                    if(r.winner()!=null)status.setText("已计分 · 滑动"+ms(r.dragMillis())+" · 下拉换组");
+                    else status.setText(!a.validStart?"起点在白色手柄外 · 继续计时":orderIndex!=displayed.targetIndex?"这单不是目标 · 继续找地址":"尚未完成 · 回位后可再试");
                     if(snapshot.totalAttempts>=ReactionSession.MAX_ATTEMPTS){
-                        session.finishRound("stopped",SystemClock.uptimeMillis());running=false;InteractionRecorder.stop();status.append("\n已达到200次操作上限，请导出后开始新会话。");updateButtons();
+                        session.finishRound("stopped",SystemClock.uptimeMillis());running=false;InteractionRecorder.stop();status.setText("已达200次上限 · 请查看报告");updateButtons();
                     }
                 }
             });
@@ -147,7 +153,7 @@ public final class ReactionTestActivity extends Activity {
                     orders.postOnAnimation(()->{
                         if(token!=generation||!running||paused)return;
                         orders.setVisibility(View.VISIBLE);session.markPresented(SystemClock.uptimeMillis());markTargetVisibility();
-                        status.setText("正在计时：找到含“田”的订单并手动滑动。下拉刷新会放弃未完成的这一轮。");
+                        status.setText("正在计时 · 下拉将放弃未完成轮次");
                     });
                 }
             });
@@ -186,7 +192,7 @@ public final class ReactionTestActivity extends Activity {
     @Override protected void onResume(){super.onResume();paused=false;}
     @Override protected void onPause(){
         paused=true;generation++;cancelSliders();report.pause();
-        if(running){session.finishRound("leave",SystemClock.uptimeMillis());running=false;InteractionRecorder.stop();status.setText("离开页面已中断本轮，计时已停止；之前的数据仍可查看或导出。");updateButtons();}
+        if(running){session.finishRound("leave",SystemClock.uptimeMillis());running=false;InteractionRecorder.stop();status.setText("已停止计时 · 开始测试会清空记录");updateButtons();}
         super.onPause();
     }
     @Override protected void onSaveInstanceState(Bundle out){
@@ -220,6 +226,7 @@ public final class ReactionTestActivity extends Activity {
     }
     private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
     private TextView text(String value,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(value);t.setTextSize(size);t.setTextColor(color);t.setLineSpacing(dp(3),1);if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return t;}
+    private TextView compactText(String value,int size,int color,boolean bold){TextView t=text(value,size,color,bold);t.setLineSpacing(0,1);t.setIncludeFontPadding(false);return t;}
     private Button button(String label){Button b=new Button(this);b.setText(label);b.setTextSize(13);b.setTextColor(INK);b.setMinHeight(dp(48));return b;}
     private void add(LinearLayout parent,View child,int top){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(top);parent.addView(child,p);}
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
