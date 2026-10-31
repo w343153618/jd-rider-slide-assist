@@ -56,22 +56,34 @@ public final class SpeedTestActivity extends Activity {
         selected = state == null ? -1 : state.getInt("selected", -1);
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
         scroll.setBackgroundColor(Color.rgb(244, 244, 241));
-        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+        LinearLayout shell = column();
+        shell.setBackgroundColor(Color.rgb(244, 244, 241));
+        shell.setOnApplyWindowInsetsListener((view, insets) -> {
             view.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
                     insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom()); return insets;
         });
+        Button back = button("‹ 返回模拟抢单");
+        back.setContentDescription("返回模拟抢单");
+        back.setOnClickListener(v -> {
+            // Reuse the existing practice screen and close this screen even when opened directly.
+            // https://developer.android.com/reference/android/content/Intent#FLAG_ACTIVITY_CLEAR_TOP
+            startActivity(new Intent(this, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            finish();
+        });
+        shell.addView(back, new LinearLayout.LayoutParams(-1, dp(52)));
+        shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout page = column(); page.setPadding(dp(16), dp(20), dp(16), dp(28));
-        scroll.addView(page); setContentView(scroll);
+        scroll.addView(page); setContentView(shell);
         add(page, text("手动测试 · 本地报告", 13, ORANGE, true), 0);
         add(page, text("测一下你的手速", 26, INK, true), 4);
         add(page, text("只测本应用练习控件，不能代表真实订单接受或服务器处理耗时。手动测速不会触发任何自动辅助。", 14, MUTED, false), 8);
         LinearLayout practice = card(); add(page, practice, 18);
         add(practice, text("从白色手柄开始，手动拖到右端", 17, INK, true), 0);
-        add(practice, text("到达 98% 行程后抬手算成功；每次结束后点击“重置 / 下一次”。最快成绩按下→首次到达终点计算。", 13, MUTED, false), 7);
+        add(practice, text("到达98%行程后抬手算成功；结束并抬手后0.2秒自动复位，可直接再滑。最快成绩按下→首次到达终点计算。", 13, MUTED, false), 7);
         slider = new ManualSpeedSliderView(this);
         LinearLayout.LayoutParams sliderParams = new LinearLayout.LayoutParams(-1, dp(68)); sliderParams.topMargin = dp(16);
         practice.addView(slider, sliderParams);
-        Button reset = button("重置 / 下一次"); add(practice, reset, 8); reset.setOnClickListener(v -> slider.reset());
         status = text("", 14, INK, true); add(practice, status, 12);
         LinearLayout recordActions = new LinearLayout(this);
         start = button("开始新记录"); stop = button("停止并生成报告");
@@ -267,7 +279,8 @@ public final class SpeedTestActivity extends Activity {
         }
         w.flush();
     }
-    private static String kind(String kind) { return "manual".equals(kind) ? "手动" : "demo_assist".equals(kind) ? "模拟辅助" : "真实页辅助"; }
+    private static String kind(String kind) { return "manual".equals(kind) ? "手动" : "reaction_manual".equals(kind)
+            ? "找字手动测试" : "demo_assist".equals(kind) ? "模拟辅助" : "真实页辅助"; }
     private static String outcome(String value) {
         switch (value) {
             case "success": return "手动成功";

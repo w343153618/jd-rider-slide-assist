@@ -24,15 +24,20 @@ public final class GestureInstrumentation extends Instrumentation {
     private final java.util.Map<Integer, RadioButton> durationOptions = new java.util.HashMap<>();
     private android.widget.Button expandSettings;
     private View demoBubble;
+    private android.widget.Spinner demoDurations;
+    private final java.util.Map<DemoSliderView,Long> completionBaseline = new java.util.HashMap<>();
     private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest, publishTest;
     private String pendingTest;
-    private boolean lifecycleTest, v14Test;
+    private boolean lifecycleTest, v14Test, v15Sliders, v15Main, v15Reaction;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); v15Main = arguments.getString("v15main") != null; v15Reaction = arguments.getString("v15reaction") != null; v15Sliders = arguments.getString("v15sliders") != null; v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (v15Main) { V15MainChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
+            if (v15Reaction) { V15ReactionChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
+            if (v15Sliders) { V15SliderChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
             if (v14Test) { V14Checks.run(this,result); finish(Activity.RESULT_OK,result); return; }
             if (lifecycleTest) { UpdateLifecycleChecks.run(this, result); finish(Activity.RESULT_OK, result); return; }
             if (publishTest) { testPublish(result); return; }
@@ -41,7 +46,7 @@ public final class GestureInstrumentation extends Instrumentation {
             if (volumeTest) { testVolume(result); return; }
             if (bubbleTest) { testBubble(result); return; }
             if (serviceTest) { testService(result); return; }
-            getTargetContext().getSharedPreferences("assist_settings", 0).edit().remove("trigger_mode").remove("swipe_duration_ms").commit();
+            getTargetContext().getSharedPreferences("assist_settings", 0).edit().remove("trigger_mode").remove("swipe_duration_ms").remove("demo_swipe_duration_ms").commit();
             Intent intent = new Intent(getTargetContext(), MainActivity.class);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             Activity activity = startActivitySync(intent);
@@ -62,9 +67,9 @@ public final class GestureInstrumentation extends Instrumentation {
             check(!done(two), "completing first demo order must leave second order untouched");
             select(two); tap(two); pause(); check(done(two), "second demo order must complete without re-enabling assistance");
             check(demoBubble != null && String.valueOf(demoBubble.getContentDescription()).contains("辅助已开启"), "completing demo orders must preserve ON state");
-            resetFromButton(one); select(one); tap(one); pause(); check(done(one), "reset button must allow the same order to be practiced again");
+            awaitAutomaticReset(one); select(one); tap(one); pause(); check(done(one), "automatic reset must allow the same order to be practiced again");
             check(done(two), "resetting first demo order must preserve second order completion");
-            resetFromButton(one); resetFromButton(two);
+            awaitAutomaticReset(one); awaitAutomaticReset(two);
             tripleClick(demoBubble);
             check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭"), "demo bubble click must turn assistance off");
             select(one); tap(one); pause(); check(!done(one), "OFF demo bubble must prevent assisted tap on first order");
@@ -102,6 +107,8 @@ public final class GestureInstrumentation extends Instrumentation {
                             "duration selection not saved: " + millis);
                 }
                 slowDuration.performClick();
+                check(demoDurations != null,"simulation duration selector missing");
+                demoDurations.setSelection(10);
             });
             check(getTargetContext().getSharedPreferences("assist_settings",0).getInt("swipe_duration_ms",0)==700,
                     "duration setting must persist in preferences");
@@ -120,7 +127,7 @@ public final class GestureInstrumentation extends Instrumentation {
             Activity reopened=startActivitySync(intent); waitForIdleSync();
             runOnMainSync(() -> findViews(reopened.getWindow().getDecorView()));
             check(slowDuration != null && slowDuration.isChecked(), "700ms choice must remain selected after reopening");
-            result.putString("result", "PASS: immediate on down while held, outside touch and drag, release on up not down, release outside, first finger release, gesture mode single tap, double tap, two-finger tap, movement, three-finger tap, independent consecutive orders with assistance staying ON, per-order reset and repeat, manual OFF blocks assisted taps on all orders, re-enable and continue, one touched order per trigger, all six duration options and faster selections, consecutive 700ms demo timing and selection after reopening");
+            result.putString("result", "PASS: immediate on down while held, outside touch and drag, release on up not down, release outside, first finger release, gesture mode single tap, double tap, two-finger tap, movement, three-finger tap, independent consecutive orders with assistance staying ON, automatic reset and repeat, manual OFF blocks assisted taps on all orders, re-enable and continue, one touched order per trigger, all six duration options and faster selections, consecutive 700ms demo timing and selection after reopening");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable e) {
             result.putString("result", "FAIL: " + e);
@@ -644,6 +651,7 @@ public final class GestureInstrumentation extends Instrumentation {
         if (v instanceof ScrollView) scroll = (ScrollView) v;
         if (v instanceof RadioButton && v.getTag() instanceof Integer) durationOptions.put((Integer)v.getTag(), (RadioButton)v);
         if (v instanceof StatusBubbleView) demoBubble=v;
+        if (v instanceof android.widget.Spinner && String.valueOf(v.getContentDescription()).startsWith("模拟抢单滑动时长")) demoDurations=(android.widget.Spinner)v;
         if (v instanceof android.widget.Button && ((android.widget.Button) v).getText().toString().contains("展开设置")) expandSettings=(android.widget.Button)v;
         if (v instanceof RadioButton && ((RadioButton) v).getText().toString().contains("按下立即")) immediateMode=(RadioButton)v;
         if (v instanceof RadioButton && ((RadioButton) v).getText().toString().contains("700 毫秒")) slowDuration=(RadioButton)v;
@@ -664,30 +672,19 @@ public final class GestureInstrumentation extends Instrumentation {
         waitForIdleSync(); SystemClock.sleep(150);
     }
     private void reset(DemoSliderView v) {
-        runOnMainSync(v::reset);
+        runOnMainSync(() -> { v.reset(); completionBaseline.put(v,v.getCompletionCount()); });
         waitForIdleSync();
     }
-    private void resetFromButton(DemoSliderView v) {
+    private void awaitAutomaticReset(DemoSliderView v) {
+        SystemClock.sleep(280); waitForIdleSync();
         runOnMainSync(() -> {
-            ViewGroup card = (ViewGroup) v.getParent();
-            for (int i = 0; i < card.getChildCount(); i++) {
-                View child = card.getChildAt(i);
-                if (child instanceof android.widget.Button
-                        && "重置本条练习".contentEquals(((android.widget.Button) child).getText())) {
-                    check(child.getVisibility() == View.VISIBLE, "completed order reset button must be visible");
-                    child.performClick();
-                    check(child.getVisibility() == View.GONE, "reset button must hide after resetting the order");
-                    return;
-                }
-            }
-            throw new AssertionError("per-order reset button missing");
+            check(v.isReadyForAttempt(), "finished order must automatically become ready");
+            completionBaseline.put(v,v.getCompletionCount());
         });
-        waitForIdleSync();
-        check(!done(v), "reset button must clear completion");
     }
     private boolean done(DemoSliderView v) {
         final boolean[] result = {false};
-        runOnMainSync(() -> result[0] = v.getContentDescription().toString().contains("模拟抢单成功"));
+        runOnMainSync(() -> result[0] = v.getCompletionCount() > completionBaseline.getOrDefault(v,0L));
         return result[0];
     }
     private void check(boolean condition, String message) { if (!condition) throw new AssertionError(message); }

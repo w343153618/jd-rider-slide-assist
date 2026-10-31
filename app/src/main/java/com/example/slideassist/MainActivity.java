@@ -78,6 +78,9 @@ public final class MainActivity extends Activity {
         speedTest = button("手速测试与轨迹报告", true);
         speedTest.setOnClickListener(v -> startActivity(new Intent(this, SpeedTestActivity.class)));
         addTop(page, speedTest, 10);
+        Button reactionTest = button("找字反应测试 · 随机订单", true);
+        reactionTest.setOnClickListener(v -> startActivity(new Intent(this, ReactionTestActivity.class)));
+        addTop(page, reactionTest, 8);
         addTop(page, text("可手动拖动测速、查看轨迹慢放和逐点数据；只有点击开始记录后才采集本工具内的数据。", 13, MUTED, false), 6);
 
         LinearLayout setup = card();
@@ -162,11 +165,10 @@ public final class MainActivity extends Activity {
             int duration = (Integer) checked.getTag();
             getSharedPreferences("assist_settings", MODE_PRIVATE).edit().putInt("swipe_duration_ms", duration).apply();
             AssistService.stopAssist();
-            for (DemoSliderView slider : sliders) slider.setSwipeDurationMillis(duration);
             message("滑动时长已设为 " + duration + " 毫秒；请重新启动并对齐辅助区");
             refreshStatus();
         });
-        addTop(setupDetails, text("时长控制拖动过程，不增加触发前的等待。模拟订单也采用所选时长。", 14, MUTED, false), 4);
+        addTop(setupDetails, text("真实页面辅助的时长设置。模拟订单下方可独立选择练习时长；手动测速不使用自动时长。", 14, MUTED, false), 4);
         addTop(setupDetails, text("音量键快捷开关", 15, INK, true), 14);
         TextView shortcut = text("先开启无障碍服务。在骑士页面，同时短按音量＋和音量－，开启或关闭辅助。也可连续轻点贴边状态球三次切换，或上下拖动状态球。单击、双击不切换。开启后对齐完整橙色滑条和左侧白色箭头块；只有从白色块内按下才触发，并从最初按下的位置向右拖。每次滑动结束会自动关闭。两键全部松开后才能再次切换。\n正常音量可能变化；请勿长按，以免触发系统快捷方式。若手机无法接收组合键，可使用状态球或下方按钮。", 14, MUTED, false);
         shortcut.setLineSpacing(dp(2), 1f);
@@ -207,6 +209,31 @@ public final class MainActivity extends Activity {
         updateDemoHint(savedMode);
         demoHint.setLineSpacing(dp(2), 1f);
         addTop(page, demoHint, 7);
+        addTop(page, text("模拟滑动时长", 16, INK, true), 14);
+        android.widget.Spinner demoDurations = new android.widget.Spinner(this);
+        demoDurations.setContentDescription("模拟抢单滑动时长，与手动测速无关");
+        int[] practiceMillis = {50, 60, 70, 80, 90, 100, 150, 200, 250, 450, 700};
+        String[] practiceLabels = new String[practiceMillis.length];
+        int savedPractice = SwipeTiming.normalize(getSharedPreferences("assist_settings", MODE_PRIVATE)
+                .getInt("demo_swipe_duration_ms", SwipeTiming.DEFAULT_MILLIS));
+        int selectedPractice = 8;
+        for (int i = 0; i < practiceMillis.length; i++) {
+            practiceLabels[i] = practiceMillis[i] + " 毫秒" + (practiceMillis[i] == 250 ? " · 默认" : "");
+            if (practiceMillis[i] == savedPractice) selectedPractice = i;
+        }
+        demoDurations.setAdapter(new android.widget.ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, practiceLabels));
+        demoDurations.setSelection(selectedPractice);
+        demoDurations.setMinimumHeight(dp(48));
+        addTop(page, demoDurations, 4);
+        demoDurations.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                int duration = practiceMillis[position];
+                getSharedPreferences("assist_settings", MODE_PRIVATE).edit().putInt("demo_swipe_duration_ms", duration).apply();
+                for (DemoSliderView slider : sliders) slider.setSwipeDurationMillis(duration);
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
+        });
         String[][] orders = {
                 {"示例便利店 · 中山路店", "取货后送至：幸福小区 3 号楼", "约 1.2 公里 · 2 件", "请放在门口置物架"},
                 {"示例鲜花店", "取货后送至：明珠花园东门附近的社区服务中心", "约 2.5 公里 · 1 件", "鲜花请轻拿轻放，送达前请联系收件人"},
@@ -271,21 +298,14 @@ public final class MainActivity extends Activity {
         DemoSliderView slider = new DemoSliderView(this);
         slider.setTriggerMode(getSharedPreferences("assist_settings", MODE_PRIVATE).getString("trigger_mode", "immediate"));
         slider.setSwipeDurationMillis(getSharedPreferences("assist_settings", MODE_PRIVATE)
-                .getInt("swipe_duration_ms", SwipeTiming.DEFAULT_MILLIS));
+                .getInt("demo_swipe_duration_ms", SwipeTiming.DEFAULT_MILLIS));
         sliders.add(slider);
         LinearLayout.LayoutParams sliderParams = new LinearLayout.LayoutParams(-1, dp(62));
         sliderParams.topMargin = dp(15);
         card.addView(slider, sliderParams);
-        Button reset = button("重置本条练习", false);
-        reset.setVisibility(View.GONE);
-        addTop(card, reset, 8);
         slider.setOnComplete(() -> {
-            state.setText("模拟成功"); state.setTextColor(Color.rgb(41, 118, 75));
-            reset.setVisibility(View.VISIBLE);
-        });
-        reset.setOnClickListener(v -> {
-            slider.reset(); state.setText("待选择"); state.setTextColor(MUTED);
-            reset.setVisibility(View.GONE);
+            state.setText("已完成 " + slider.getCompletionCount() + " 次");
+            state.setTextColor(Color.rgb(41, 118, 75));
         });
     }
 
@@ -300,7 +320,7 @@ public final class MainActivity extends Activity {
                 : "release".equals(mode)
                 ? "以下均为虚构订单，不会产生真实接单。在左侧白色箭头块内按下，最初的手指抬起时即模拟抢单；起点使用最初按下坐标。"
                 : "以下均为虚构订单，不会产生真实接单。手指一按下左侧白色箭头块就从该位置向右辅助拖动；橙色其他位置不触发。";
-        demoHint.setText("练习辅助已开启。连续轻点贴边状态球三次可关闭，按住可上下移动。完成一条后可继续练习其他订单；同一条可点“重置本条练习”再次练习。状态球仅控制本页练习。\n" + instruction);
+        demoHint.setText("练习辅助已开启。连续轻点贴边状态球三次可关闭，按住可上下移动。每次结束并抬手后0.2秒自动复位，可直接再练；次数会保留。状态球仅控制本页练习。\n" + instruction);
     }
 
     void setDemoAssistEnabled(boolean enabled) {

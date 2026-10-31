@@ -30,7 +30,8 @@ public final class V14Checks {
         check(InteractionRecorder.snapshot().traces.isEmpty(), "opt-in must precede collection");
         click(i, a, "开始新记录");
         drag(i, slider, true);
-        click(i, a, "重置 / 下一次");
+        SystemClock.sleep(280); i.waitForIdleSync();
+        check(slider.isReadyForAttempt(), "manual slider must automatically reset before the next attempt");
         drag(i, slider, false);
         InteractionRecorder.Session measured = InteractionRecorder.snapshot();
         check(measured.traces.size() == 2, "expected invalid and manual-success attempts");
