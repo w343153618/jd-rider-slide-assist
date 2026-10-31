@@ -26,12 +26,14 @@ public final class GestureInstrumentation extends Instrumentation {
     private View demoBubble;
     private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest, publishTest;
     private String pendingTest;
+    private boolean lifecycleTest;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (lifecycleTest) { UpdateLifecycleChecks.run(this, result); finish(Activity.RESULT_OK, result); return; }
             if (publishTest) { testPublish(result); return; }
             if (pendingTest != null) { testPending(result); return; }
             if (updateTest) { testUpdate(result); return; }
@@ -55,10 +57,21 @@ public final class GestureInstrumentation extends Instrumentation {
             select(one); outsideTap(one); pause(); check(!done(one), "touch outside slider must not complete");
             select(one); outsideDragIn(one); pause(); check(!done(one), "outside start dragged into slider must not complete");
             select(one); downHeld(one); check(done(one), "default mode must complete on down before release");
-            check(demoBubble != null && String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭"), "demo bubble should turn off after success");
-            runOnMainSync(one::reset); select(one); tap(one); pause(); check(!done(one), "OFF demo bubble must prevent assisted tap");
+            check(!done(two), "completing first demo order must leave second order untouched");
+            select(two); tap(two); pause(); check(done(two), "second demo order must complete without re-enabling assistance");
+            check(demoBubble != null && String.valueOf(demoBubble.getContentDescription()).contains("辅助已开启"), "completing demo orders must preserve ON state");
+            resetFromButton(one); select(one); tap(one); pause(); check(done(one), "reset button must allow the same order to be practiced again");
+            check(done(two), "resetting first demo order must preserve second order completion");
+            resetFromButton(one); resetFromButton(two);
+            runOnMainSync(() -> demoBubble.performClick());
+            check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭"), "demo bubble click must turn assistance off");
+            select(one); tap(one); pause(); check(!done(one), "OFF demo bubble must prevent assisted tap on first order");
+            select(two); tap(two); pause(); check(!done(two), "OFF demo bubble must prevent assisted tap on another order");
             runOnMainSync(() -> demoBubble.performClick());
             check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已开启"), "demo bubble should turn on when clicked");
+            select(two); tap(two); pause(); check(done(two), "turning assistance back on must allow another order to complete");
+            check(!done(one), "re-enabled assistance must still require each order to be touched");
+            reset(two);
             reset(one);
             runOnMainSync(() -> { if (releaseMode == null) throw new AssertionError("release mode option missing"); releaseMode.performClick(); });
             waitForIdleSync();
@@ -92,23 +105,20 @@ public final class GestureInstrumentation extends Instrumentation {
                     "duration setting must persist in preferences");
             select(one); float[] durationPoint=center(one); long durationDown=SystemClock.uptimeMillis();
             send(durationDown,durationDown,MotionEvent.ACTION_DOWN,new float[][]{durationPoint});
-            check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭"), "first slide must close assist immediately");
-            runOnMainSync(() -> {
-                long now=SystemClock.uptimeMillis(); float x=two.getWidth()/2f, y=two.getHeight()/2f;
-                MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,x,y,0);
-                MotionEvent up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,x,y,0);
-                try { two.dispatchTouchEvent(down); two.dispatchTouchEvent(up); } finally { down.recycle(); up.recycle(); }
-            });
+            check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已开启"), "starting a demo slide must preserve ON state");
             SystemClock.sleep(350); check(!done(one), "700ms demo should still animate after 350ms");
             SystemClock.sleep(500); waitForIdleSync(); check(done(one), "700ms demo must complete after animation");
-            check(!done(two), "touching another order while first animates must not start another assisted swipe");
+            check(!done(two), "first demo animation must not trigger another order");
+            check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已开启"), "ending a demo slide must preserve ON state");
             send(durationDown,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,new float[][]{durationPoint});
+            select(two); tap(two); SystemClock.sleep(850); waitForIdleSync();
+            check(done(two), "second order must use the selected duration without re-enabling assistance");
             runOnMainSync(activity::finish); waitForIdleSync();
             sliders.clear(); durationOptions.clear(); scroll=null; slowDuration=null;
             Activity reopened=startActivitySync(intent); waitForIdleSync();
             runOnMainSync(() -> findViews(reopened.getWindow().getDecorView()));
             check(slowDuration != null && slowDuration.isChecked(), "700ms choice must remain selected after reopening");
-            result.putString("result", "PASS: immediate on down while held, outside touch and drag, release on up not down, release outside, first finger release, gesture mode single tap, double tap, two-finger tap, movement, three-finger tap, independent orders, demo bubble auto-OFF and tap to enable, second-order race prevented, all six duration options and faster selections, 700ms demo timing and selection after reopening");
+            result.putString("result", "PASS: immediate on down while held, outside touch and drag, release on up not down, release outside, first finger release, gesture mode single tap, double tap, two-finger tap, movement, three-finger tap, independent consecutive orders with assistance staying ON, per-order reset and repeat, manual OFF blocks assisted taps on all orders, re-enable and continue, one touched order per trigger, all six duration options and faster selections, consecutive 700ms demo timing and selection after reopening");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable e) {
             result.putString("result", "FAIL: " + e);
@@ -264,8 +274,8 @@ public final class GestureInstrumentation extends Instrumentation {
             android.content.SharedPreferences pending=c.getSharedPreferences("pending_update",0);
             pending.edit().putBoolean("waiting",true).putString("digest",digest).putString("tag","v9.9.9").commit();
             Activity activity=startUpdateActivity();
-            waitForDialog(allowed ? "安装包校验失败" : "尚未允许安装");
-            check(!pending.getBoolean("waiting",false),"resume should consume pending state without installing");
+            waitForDialog("安装包校验失败");
+            check(pending.getAll().isEmpty(),"invalid saved update must be cleared without installing, regardless of install permission");
             getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
                     .performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
             runOnMainSync(activity::finish); waitForIdleSync();
@@ -597,11 +607,26 @@ public final class GestureInstrumentation extends Instrumentation {
         waitForIdleSync(); SystemClock.sleep(150);
     }
     private void reset(DemoSliderView v) {
+        runOnMainSync(v::reset);
+        waitForIdleSync();
+    }
+    private void resetFromButton(DemoSliderView v) {
         runOnMainSync(() -> {
-            v.reset();
-            if (demoBubble != null && String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭")) demoBubble.performClick();
+            ViewGroup card = (ViewGroup) v.getParent();
+            for (int i = 0; i < card.getChildCount(); i++) {
+                View child = card.getChildAt(i);
+                if (child instanceof android.widget.Button
+                        && "重置本条练习".contentEquals(((android.widget.Button) child).getText())) {
+                    check(child.getVisibility() == View.VISIBLE, "completed order reset button must be visible");
+                    child.performClick();
+                    check(child.getVisibility() == View.GONE, "reset button must hide after resetting the order");
+                    return;
+                }
+            }
+            throw new AssertionError("per-order reset button missing");
         });
         waitForIdleSync();
+        check(!done(v), "reset button must clear completion");
     }
     private boolean done(DemoSliderView v) {
         final boolean[] result = {false};

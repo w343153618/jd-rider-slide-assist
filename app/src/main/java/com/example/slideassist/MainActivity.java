@@ -267,11 +267,9 @@ public final class MainActivity extends Activity {
         Button reset = button("重置本条练习", false);
         reset.setVisibility(View.GONE);
         addTop(card, reset, 8);
-        slider.setOnSlideStarted(() -> setDemoAssistEnabled(false));
         slider.setOnComplete(() -> {
             state.setText("模拟成功"); state.setTextColor(Color.rgb(41, 118, 75));
             reset.setVisibility(View.VISIBLE);
-            setDemoAssistEnabled(false);
         });
         reset.setOnClickListener(v -> {
             slider.reset(); state.setText("待选择"); state.setTextColor(MUTED);
@@ -290,7 +288,7 @@ public final class MainActivity extends Activity {
                 : "release".equals(mode)
                 ? "以下均为虚构订单，不会产生真实接单。在橙色区域按下，最初的手指抬起时即模拟抢单；滚动列表请从橙色区域外起手。"
                 : "以下均为虚构订单，不会产生真实接单。手指一按下橙色区域就会模拟抢单；滚动列表请从橙色区域外起手。";
-        demoHint.setText("练习辅助已开启。点按贴边状态球可关闭，按住可上下移动。每次完成后自动关闭。\n" + instruction);
+        demoHint.setText("练习辅助已开启。点按贴边状态球可关闭，按住可上下移动。完成一条后可继续练习其他订单；同一条可点“重置本条练习”再次练习。状态球仅控制本页练习。\n" + instruction);
     }
 
     void setDemoAssistEnabled(boolean enabled) {

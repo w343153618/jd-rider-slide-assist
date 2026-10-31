@@ -53,7 +53,7 @@ public final class UpdateManager {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private volatile boolean destroyed;
     private volatile int generation;
-    private boolean busy, waitingForPermission, verifiedReady;
+    private boolean busy, pendingResume, verifiedReady;
     private String verifiedDigest, verifiedTag;
     private AlertDialog progress;
 
@@ -61,8 +61,8 @@ public final class UpdateManager {
         this.activity = new WeakReference<>(activity);
         this.app = activity.getApplicationContext();
         android.content.SharedPreferences pending = app.getSharedPreferences("pending_update", Context.MODE_PRIVATE);
-        waitingForPermission = pending.getBoolean("waiting", false);
-        if (waitingForPermission) {
+        pendingResume = pending.getBoolean("waiting", false) || pending.contains("digest") || pending.contains("tag");
+        if (pendingResume) {
             verifiedDigest = pending.getString("digest", "");
             verifiedTag = pending.getString("tag", "");
             verifiedReady = verifiedDigest != null && verifiedTag != null && verifiedDigest.matches("[0-9a-f]{64}") && VERSION.matcher(verifiedTag).matches()
@@ -132,7 +132,7 @@ public final class UpdateManager {
     private void download(String apkUrl, String shaUrl, String tag) {
         if (destroyed || busy) return;
         verifiedReady = false;
-        waitingForPermission = false;
+        pendingResume = false;
         app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit().clear().apply();
         final int token = begin("正在下载并校验更新");
         executor.execute(() -> {
@@ -153,7 +153,10 @@ public final class UpdateManager {
                 File immutable = UpdateApkProvider.updateFile(app, expected);
                 publishVerified(app, tmp, immutable, expected, tag);
                 tmp = null;
-                post(token, () -> { end(); verifiedDigest = expected; verifiedTag = tag; verifiedReady = true; showInstallReady(); });
+                post(token, () -> {
+                    end(); verifiedDigest = expected; verifiedTag = tag; verifiedReady = true;
+                    if (savePending(false)) showInstallReady();
+                });
             } catch (Exception e) { fail(token, "更新下载或校验失败", e); }
             finally { if (tmp != null) tmp.delete(); }
         });
@@ -162,31 +165,32 @@ public final class UpdateManager {
     private void showInstallReady() {
         Activity a = liveActivity();
         if (a == null || !verifiedReady) return;
+        final String digest = verifiedDigest;
         new AlertDialog.Builder(a).setTitle("更新已准备好")
                 .setMessage("版本 " + verifiedTag + "：已核对文件摘要、应用包名、发布版本与签名证书；安装包版本高于当前版本。Android 将在安装时验证 APK 签名，并请您确认。")
-                .setNegativeButton("稍后", null).setPositiveButton("安装更新", (d, w) -> requestInstall()).show();
+                .setNegativeButton("稍后", (d, w) -> discardPending(digest))
+                .setOnCancelListener(d -> discardPending(digest))
+                .setPositiveButton("安装更新", (d, w) -> { if (digest.equals(verifiedDigest)) requestInstall(); }).show();
     }
 
     private void requestInstall() {
         Activity a = liveActivity();
-        if (a == null || !verifiedReady) return;
+        if (a == null || !verifiedReady || busy) return;
+        final String digest = verifiedDigest;
         if (Build.VERSION.SDK_INT >= 26 && !app.getPackageManager().canRequestPackageInstalls()) {
             new AlertDialog.Builder(a).setTitle("允许安装更新")
                     .setMessage("请在系统设置中允许本应用安装更新，返回后再确认安装。")
-                    .setNegativeButton("取消", null).setPositiveButton("打开设置", (d, w) -> {
+                    .setNegativeButton("取消", (d, w) -> discardPending(digest))
+                    .setOnCancelListener(d -> discardPending(digest))
+                    .setPositiveButton("打开设置", (d, w) -> {
                         try {
-                            waitingForPermission = true;
-                            if (!app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit()
-                                    .putBoolean("waiting", true).putString("digest", verifiedDigest).putString("tag", verifiedTag).commit()) {
-                                waitingForPermission = false;
-                                showMessage("无法保存安装状态", "请重新检查更新后再试。");
-                                return;
-                            }
+                            if (!verifiedReady || !digest.equals(verifiedDigest) || !savePending(true)) return;
+                            pendingResume = true;
                             a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                                     Uri.parse("package:" + app.getPackageName())));
                         } catch (RuntimeException ex) {
-                            waitingForPermission = false;
-                            app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit().clear().apply();
+                            pendingResume = false;
+                            app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit().putBoolean("waiting", false).apply();
                             showMessage("无法打开设置", "请在系统设置中允许本应用安装未知来源应用。");
                         }
                     }).show();
@@ -200,21 +204,19 @@ public final class UpdateManager {
                 Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE).setDataAndType(uri, UpdateApkProvider.MIME)
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 intent.setClipData(ClipData.newRawUri("update", uri));
-                app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit().clear().apply();
                 current.startActivity(intent);
-                verifiedReady = false;
+                clearPending();
             } catch (RuntimeException ex) { showMessage("无法打开安装界面", "请重新检查更新并重试。"); }
         });
     }
 
     /** Call on Activity resume; returning from settings never installs without another tap. */
     public void resumePendingInstall() {
-        if (!waitingForPermission || destroyed) return;
-        waitingForPermission = false;
-        app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit().clear().apply();
-        if (!verifiedReady) { showMessage("安装包已失效", "请重新检查并下载更新。"); return; }
-        if (Build.VERSION.SDK_INT < 26 || app.getPackageManager().canRequestPackageInstalls()) verifyReadyThen(this::showInstallReady);
-        else showMessage("尚未允许安装", "需要系统安装授权后，才能继续安装更新。");
+        if (!pendingResume || destroyed || busy) return;
+        pendingResume = false;
+        app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit().putBoolean("waiting", false).apply();
+        if (!verifiedReady) { clearPending(); showMessage("安装包已失效", "请重新检查并下载更新。"); return; }
+        verifyReadyThen(this::showInstallReady);
     }
 
     private void verifyReadyThen(Runnable next) {
@@ -227,11 +229,27 @@ public final class UpdateManager {
                 if (!digest.equals(fileSha256(file))) throw new IOException("安装包校验值不一致");
                 verifyArchive(app, file, tag);
                 check(token);
-                post(token, () -> { end(); next.run(); });
+                post(token, () -> {
+                    end();
+                    if (verifiedReady && digest.equals(verifiedDigest) && tag.equals(verifiedTag)) next.run();
+                });
             } catch (Exception e) {
-                post(token, () -> { verifiedReady = false; end(); showMessage("安装包校验失败", "请重新检查并下载更新。"); });
+                post(token, () -> { clearPending(); end(); showMessage("安装包校验失败", "请重新检查并下载更新。"); });
             }
         });
+    }
+
+    private boolean savePending(boolean waiting) {
+        if (app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit()
+                .putBoolean("waiting", waiting).putString("digest", verifiedDigest).putString("tag", verifiedTag).commit()) return true;
+        clearPending();
+        showMessage("无法保存安装状态", "请重新检查更新后再试。");
+        return false;
+    }
+    private void discardPending(String digest) { if (digest != null && digest.equals(verifiedDigest)) clearPending(); }
+    private void clearPending() {
+        verifiedReady = false; pendingResume = false; verifiedDigest = null; verifiedTag = null;
+        app.getSharedPreferences("pending_update", Context.MODE_PRIVATE).edit().clear().apply();
     }
 
     public void destroy() {
@@ -251,7 +269,7 @@ public final class UpdateManager {
         }
         return token;
     }
-    private void cancel(int token) { if (token == generation) { generation++; busy = false; progress = null; } }
+    private void cancel(int token) { if (token == generation) { generation++; busy = false; progress = null; clearPending(); } }
     private void end() { busy = false; if (progress != null) { progress.dismiss(); progress = null; } }
     private Activity liveActivity() { Activity a = activity.get(); return destroyed || a == null || a.isFinishing() || a.isDestroyed() ? null : a; }
     private void post(int token, Runnable action) { main.post(() -> { if (!destroyed && token == generation) action.run(); }); }

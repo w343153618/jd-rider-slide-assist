@@ -28,7 +28,6 @@ public final class DemoSliderView extends View {
     private ValueAnimator animator;
     private int swipeDurationMillis = SwipeTiming.DEFAULT_MILLIS;
     private Runnable onComplete;
-    private Runnable onSlideStarted;
 
     public DemoSliderView(Context context) {
         super(context);
@@ -55,7 +54,6 @@ public final class DemoSliderView extends View {
     }
 
     public void setOnComplete(Runnable callback) { onComplete = callback; }
-    public void setOnSlideStarted(Runnable callback) { onSlideStarted = callback; }
 
     public void setSwipeDurationMillis(int duration) {
         swipeDurationMillis = SwipeTiming.normalize(duration);
@@ -202,7 +200,6 @@ public final class DemoSliderView extends View {
     private boolean inside(float x, float y) { return x >= 0 && y >= 0 && x < getWidth() && y < getHeight(); }
     private float distance(float x, float y) { return (float) Math.hypot(x, y); }
     private void complete() {
-        if (onSlideStarted != null) onSlideStarted.run();
         animateTo(1, true);
     }
     private void animateTo(float end, boolean finish) {
