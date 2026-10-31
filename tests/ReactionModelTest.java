@@ -49,7 +49,7 @@ public final class ReactionModelTest {
         ReactionSession session = new ReactionSession();
         ReactionOrderGenerator.Batch batch = ReactionOrderGenerator.generate(4, null);
         session.beginRound(batch); session.markPresented(100);
-        int correct = batch.targetIndex, wrong = (correct + 1) % 6;
+        int correct = batch.targetIndex, wrong = (correct + 1) % batch.orders.size();
         session.recordAttempt(wrong, 200, 210, 250, 270, true, "success", null);
         session.recordAttempt(correct, 350, 360, -1, 400, false, "invalid_start", null);
         session.recordAttempt(correct, 500, 510, -1, 540, true, "incomplete", null);
@@ -112,10 +112,17 @@ public final class ReactionModelTest {
         Set<Integer> lengths = new HashSet<>(), positions = new HashSet<>();
         for (int seed = 0; seed < 500; seed++) {
             ReactionOrderGenerator.Batch batch = ReactionOrderGenerator.generate(seed, previous);
-            check(batch.orders.size() == 6, "six orders");
+            check(batch.orders.size() == 3, "three orders fit one practice screen");
+            check(batch.targetIndex >= 0 && batch.targetIndex < 2, "target always in first or second order");
+            check("address".equals(batch.targetField), "target only belongs to address text");
             int targets = 0;
             for (int i = 0; i < batch.orders.size(); i++) {
                 ReactionOrderGenerator.Order order = batch.orders.get(i);
+                check(order.title.length() <= 20 && order.address.length() <= 30 && order.note.length() <= 22,
+                        "compact full text must fit without hiding the marker");
+                check(occurrences(order.title, '田') == 0 && occurrences(order.note, '田') == 0,
+                        "title and note never contain target");
+                if (i == 2) check(occurrences(order.address, '田') == 0, "third order never contains target");
                 for (String value : new String[]{order.title, order.address, order.note}) {
                     targets += occurrences(value, '田'); lengths.add(value.length());
                 }
@@ -130,10 +137,13 @@ public final class ReactionModelTest {
             String field = "title".equals(batch.targetField) ? target.title
                     : "address".equals(batch.targetField) ? target.address : target.note;
             check(field.charAt(batch.targetOffset) == '田', "target metadata matches text");
+            check(field.matches("虚构市[^0-9]*田[^0-9]*[0-9]+号 .*"),
+                    "target is a normal road-name character before the house number");
             positions.add(batch.targetIndex);
             previous = batch;
         }
-        check(lengths.size() > 15 && positions.size() == 6, "varied lengths and target positions");
+        check(lengths.size() >= 8 && positions.size() == 2 && positions.contains(0) && positions.contains(1),
+                "compact text has varied lengths and both allowed target positions");
         ReactionOrderGenerator.Batch first = ReactionOrderGenerator.generate(42, null);
         ReactionOrderGenerator.Batch same = ReactionOrderGenerator.generate(42, null);
         check(first.orders.get(0).title.equals(same.orders.get(0).title), "reproducible seed");
