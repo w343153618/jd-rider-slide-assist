@@ -14,8 +14,8 @@ android {
         minSdk 24
         targetSdk 35
         testInstrumentationRunner 'com.example.slideassist.GestureInstrumentation'
-        versionCode 8
-        versionName '1.4.0'
+        versionCode 9
+        versionName '1.5.0'
     }
     signingConfigs {
         release {
