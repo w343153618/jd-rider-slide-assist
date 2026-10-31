@@ -13,7 +13,7 @@ public final class ReactionExport {
         w.beginObject(); w.name("schema").value("reaction-report-1");
         w.name("clock").value("Android uptimeMillis; presentation is a UI frame callback, not physical pixels");
         w.name("bodyCurrent").nullValue();
-        w.name("limitations").value("Local synthetic practice only; visibility is layout intersection, not gaze. pressure/size/axes are raw device estimates. Sample gaps are not hardware scan rate; receipt lag is not hardware/network latency. No server outcome is measured.");
+        w.name("limitations").value("Samples are Android-delivered MotionEvents and may be system-resampled, not raw touch-controller output. Local synthetic practice only; visibility is layout intersection, not gaze. pressure/size/axes are raw device estimates. Sample gaps are not hardware scan rate; receipt lag is not hardware/network latency. No server outcome is measured.");
         w.name("maxRounds").value(ReactionSession.MAX_ROUNDS); w.name("maxAttempts").value(ReactionSession.MAX_ATTEMPTS);
         w.name("maxSamplesPerTrace").value(InteractionRecorder.MAX_SAMPLES); w.name("maxTotalSamples").value(InteractionRecorder.MAX_TOTAL_SAMPLES);
         w.name("droppedRounds").value(session.droppedRounds); w.name("droppedAttempts").value(session.droppedAttempts);

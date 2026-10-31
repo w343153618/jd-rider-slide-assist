@@ -28,9 +28,9 @@ public final class GestureInstrumentation extends Instrumentation {
     private final java.util.Map<DemoSliderView,Long> completionBaseline = new java.util.HashMap<>();
     private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest, publishTest;
     private String pendingTest;
-    private boolean lifecycleTest, v14Test, v15Sliders, v15Main, v15Reaction;
+    private boolean lifecycleTest, v14Test, v15Sliders, v15Main, v15Reaction, unbufferedFixture;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); v15Main = arguments.getString("v15main") != null; v15Reaction = arguments.getString("v15reaction") != null; v15Sliders = arguments.getString("v15sliders") != null; v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); unbufferedFixture = arguments.getString("unbuffered") != null; v15Main = arguments.getString("v15main") != null; v15Reaction = arguments.getString("v15reaction") != null; v15Sliders = arguments.getString("v15sliders") != null; v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
@@ -473,6 +473,7 @@ public final class GestureInstrumentation extends Instrumentation {
         Intent fixture = getTargetContext().getPackageManager().getLaunchIntentForPackage(BuildConfig.TARGET_PACKAGE);
         check(fixture != null, "install the separate fixture app first");
         fixture.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        fixture.putExtra("unbuffered", unbufferedFixture);
         getTargetContext().startActivity(fixture);
         SystemClock.sleep(1200);
         InteractionRecorder.clear(); InteractionRecorder.start();
@@ -498,7 +499,7 @@ public final class GestureInstrumentation extends Instrumentation {
         check(completedTraces>=9 && ReportStats.of(InteractionRecorder.snapshot()).manualSuccessCount==0,
                 "real auxiliary timing must be collected separately from human speed");
         InteractionRecorder.clear();
-        result.putString("result", "PASS service: orange start and drag-in rejected, exact initial DOWN X/Y and preserved grab offset, opt-in real stage tracing isolated from human stats; immediate quick up, immediate held, release held then up at 100/150/200/250/450/700ms, double tap; callback completed and fixture received DOWN/MOVE/UP");
+        result.putString("result", "PASS service (" + (unbufferedFixture ? "unbuffered receiver" : "default buffered receiver") + "): orange start and drag-in rejected, exact initial DOWN X/Y and preserved grab offset, opt-in real stage tracing isolated from human stats; immediate quick up, immediate held, release held then up at 100/150/200/250/450/700ms, double tap; callback completed and fixture received DOWN/MOVE/UP");
         finish(Activity.RESULT_OK, result);
     }
     private void serviceInvalidStarts() throws Exception {
@@ -529,6 +530,12 @@ public final class GestureInstrumentation extends Instrumentation {
                 throw new AssertionError("cannot arm service");
         });
         View area=awaitArea();
+        // A laid-out overlay may precede its input window registration. Exercise a visible,
+        // settled control rather than injecting into a surface while it is still appearing.
+        java.util.concurrent.CountDownLatch displayed = new java.util.concurrent.CountDownLatch(1);
+        runOnMainSync(() -> area.postOnAnimation(() -> area.postOnAnimation(displayed::countDown)));
+        check(displayed.await(2, java.util.concurrent.TimeUnit.SECONDS), "fixture overlay frames did not settle");
+        check(armed(), "fixture overlay must still be armed before the physical test touch");
         android.app.UiAutomation automation = getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
         java.lang.reflect.Field instance = AssistService.class.getDeclaredField("instance"); instance.setAccessible(true);
         AssistService service = (AssistService) instance.get(null);
@@ -571,7 +578,8 @@ public final class GestureInstrumentation extends Instrumentation {
         float[] travel = {0}; runOnMainSync(() -> travel[0]=new SliderGeometry(area.getWidth(),area.getHeight(),
                 area.getResources().getDisplayMetrics().density).travel());
         check(Math.abs(received[2]-received[0]-travel[0])<3 && Math.abs(received[3]-received[1])<3,
-                "rightward gesture must preserve grab offset and original Y");
+                "rightward gesture must preserve grab offset and original Y; expected travel="
+                        + travel[0] + " received=" + java.util.Arrays.toString(received));
     }
 
     private float[] fixtureCoordinatesFor(int count) throws Exception {
@@ -584,6 +592,11 @@ public final class GestureInstrumentation extends Instrumentation {
         String prefix="UP count="+count+" "; String last=null;
         for(String line:out.toString("UTF-8").split("\n"))if(line.contains(prefix))last=line;
         check(last!=null,"missing fixture coordinate result");
+        if (unbufferedFixture) {
+            check(last.contains("unbuffered=true"), "strict A/B receiver must request unbuffered input");
+            if (android.os.Build.VERSION.SDK_INT >= 35)
+                check(last.contains("resampled=false"), "unbuffered endpoint must be original input");
+        }
         java.util.regex.Matcher m=java.util.regex.Pattern.compile("sx=([-0-9.]+) sy=([-0-9.]+) ex=([-0-9.]+) ey=([-0-9.]+)").matcher(last);
         check(m.find(),"fixture did not expose real receiver coordinates");
         return new float[]{Float.parseFloat(m.group(1)),Float.parseFloat(m.group(2)),Float.parseFloat(m.group(3)),Float.parseFloat(m.group(4))};

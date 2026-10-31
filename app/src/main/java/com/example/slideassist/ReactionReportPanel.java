@@ -126,7 +126,7 @@ final class ReactionReportPanel extends LinearLayout {
                     .append(a.trace.duplicateSamples).append("；逆序舍弃 ").append(a.trace.outOfOrderSamples).append("；未保存阶段 ").append(a.trace.droppedStages)
                     .append("。坐标为当前滑条局部px，密度 ").append(n(a.trace.density)).append(" px/dp。\n");
         }
-        b.append("全部数据来自本工具的手动测试。pressure等可能固定或估算，不能当作真实物理按压力；人体电流Android未提供。接收滞后不是硬件或网络延迟，采样间隔不是触控扫描频率。回放光点只作插值显示，原始点不补造。");
+        b.append("全部数据来自本工具的手动测试。原始点是Android交付样本，系统可能已重采样，不等于芯片未处理数据。pressure等可能固定或估算，不能当作真实物理按压力；人体电流Android未提供。接收滞后不是硬件或网络延迟，采样间隔不是触控扫描频率。回放光点只作插值显示，原始点不补造。");
         details.setText(b.toString());
         StringBuilder points = new StringBuilder("#  t(ms)  lag(ms)   x(px)   y(px)  pressure  size  major  minor  angle  tool/pointer/action\n");
         if (a.trace != null) for (int i = 0; i < a.trace.samples.size(); i++) {

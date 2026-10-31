@@ -128,7 +128,7 @@ public final class SpeedTestActivity extends Activity {
         exports.addView(json, new LinearLayout.LayoutParams(0, dp(52), 1));
         exports.addView(csv, new LinearLayout.LayoutParams(0, dp(52), 1)); add(report, exports, 10);
         json.setOnClickListener(v -> export(EXPORT_JSON)); csv.setOnClickListener(v -> export(EXPORT_CSV));
-        add(page, text("读数说明：应用接收滞后 = 应用收到事件时刻 − 事件时间，包含批处理、排队及调度，不能当作触控硬件延迟或网络 / 服务器耗时。采样间隔不等于触控硬件扫描频率。pressure 可能为固定或估算值，不能视为真实按压力；size、接触长短轴、角度也是设备原始估算值。人体电流：Android 未提供。", 12, MUTED, false), 16);
+        add(page, text("读数说明：“原始点”指Android交付给应用的事件样本，系统可能已做重采样，不等于触控芯片的未处理数据。应用接收滞后 = 应用收到事件时刻 − 事件时间，包含批处理、排队及调度，不能当作触控硬件延迟或网络 / 服务器耗时。采样间隔不等于触控硬件扫描频率。pressure 可能为固定或估算值，不能视为真实按压力；size、接触长短轴、角度也是设备原始估算值。人体电流：Android 未提供。", 12, MUTED, false), 16);
         refresh();
         if (state != null) replay.seekTo(state.getDouble("elapsed", 0));
     }
