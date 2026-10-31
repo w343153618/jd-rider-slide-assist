@@ -67,7 +67,7 @@ SHA 文件与 APK 同属一个发布来源，摘要用于校验传输完整性�
 
 ## 测试
 
-测试代码、命令和结果见 [1.1.0验证记录](docs/verification.md) 与 [1.2.0组合键验证记录](docs/verification-volume-keys.md)。`fixtureCheck` 为独立包名的验收构建，仅绑定自有接收 App；不能将它作为京东适配包交付。`debug` 与 `release` 均固定绑定正式目标包。
+测试代码、命令和结果见 [初始验证](docs/verification.md)、[组合键与状态球](docs/verification-volume-keys.md)、[六档时长](docs/verification-1.3.0.md) 与 [1.3.1完整下载升级](docs/verification-1.3.1.md)。`fixtureCheck` 为独立包名的验收构建，仅绑定自有接收 App；不能将它作为京东适配包交付。`debug` 与 `release` 均固定绑定正式目标包。
 
 ## 目录
 
