@@ -9,6 +9,7 @@ import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.SystemClock;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.widget.TextView;
 import java.util.Collections;
@@ -20,6 +21,7 @@ public final class StatusBubbleView extends TextView {
     private final TripleTapDetector taps = new TripleTapDetector();
     private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path handset = new Path();
+    private final GradientDrawable square = new GradientDrawable();
     private boolean active;
     private int opacityPercent = DEFAULT_OPACITY_PERCENT;
     private long startedElapsedMillis = -1;
@@ -31,21 +33,20 @@ public final class StatusBubbleView extends TextView {
     public StatusBubbleView(Context context) {
         super(context);
         setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        setTextSize(7);
-        setTextColor(0xff00e676);
+        setTextSize(BubbleSettings.DEFAULT_SIZE_DP * .25f);
+        setTextColor(0xff07c160);
         setClickable(true);
         setPadding(0, 0, 0, 0);
         setMinWidth(0); setMinHeight(0);
         setIncludeFontPadding(false);
-        iconPaint.setColor(0xff00e676);
+        iconPaint.setColor(0xff07c160);
         handset.moveTo(5, 2); handset.cubicTo(3, 2, 2, 4, 2, 6);
         handset.cubicTo(2, 14, 10, 22, 18, 22);
         handset.cubicTo(20, 22, 22, 20, 22, 18);
         handset.lineTo(22, 15); handset.lineTo(16, 13); handset.lineTo(13, 16);
         handset.cubicTo(10, 14, 8, 12, 7, 9);
         handset.lineTo(10, 6); handset.lineTo(8, 2); handset.close();
-        GradientDrawable background = new GradientDrawable();
-        background.setColor(Color.BLACK); setBackground(background);
+        square.setColor(Color.BLACK); setBackground(square);
         setOpacityPercent(DEFAULT_OPACITY_PERCENT);
         setActive(false);
     }
@@ -86,13 +87,19 @@ public final class StatusBubbleView extends TextView {
     private void fitTimerText() {
         if (getWidth() == 0 || getText().length() == 0) return;
         float unscaled = getPaint().measureText(getText().toString()) / Math.max(.01f, getTextScaleX());
-        float scale = Math.min(1f, Math.max(1, getWidth() - dp(2)) / Math.max(1, unscaled));
+        float scale = Math.min(1f, Math.max(1, getWidth() - getPaddingLeft() - getPaddingRight()) / Math.max(1, unscaled));
         if (Math.abs(scale - getTextScaleX()) > .001f) setTextScaleX(scale);
     }
     @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); refreshTimer(); }
     @Override protected void onDetachedFromWindow() { stopTick(); super.onDetachedFromWindow(); }
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        super.onSizeChanged(w, h, oldw, oldh); fitTimerText();
+        super.onSizeChanged(w, h, oldw, oldh);
+        float side = Math.min(w, h);
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, side * .25f);
+        int horizontal = Math.round(side * .05f);
+        setPadding(horizontal, 0, horizontal, Math.round(side * .035f));
+        square.setCornerRadius(side * 6f / 64f);
+        fitTimerText();
         if (Build.VERSION.SDK_INT >= 29) {
             // Reserve only this small control so its edge drag does not become Android Back.
             // https://developer.android.com/develop/ui/views/touch-and-input/gestures/gesturenav
@@ -101,8 +108,9 @@ public final class StatusBubbleView extends TextView {
         }
     }
     @Override protected void onDraw(Canvas canvas) {
-        float size = dp(active ? 15 : 19);
-        float top = active ? dp(1) : (getHeight() - size) / 2f;
+        float side = Math.min(getWidth(), getHeight());
+        float size = side * (active ? 15f / 28f : 19f / 28f);
+        float top = active ? side * .05f : (getHeight() - size) / 2f;
         int save = canvas.save(); canvas.translate((getWidth() - size) / 2f, top);
         canvas.scale(size / 24f, size / 24f); canvas.drawPath(handset, iconPaint); canvas.restoreToCount(save);
         super.onDraw(canvas);
@@ -116,7 +124,4 @@ public final class StatusBubbleView extends TextView {
         return taps.onTap(SystemClock.uptimeMillis()) && super.performClick();
     }
 
-    private int dp(float value) {
-        return (int) (getResources().getDisplayMetrics().density * value + .5f);
-    }
 }

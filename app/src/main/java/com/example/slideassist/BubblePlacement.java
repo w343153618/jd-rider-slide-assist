@@ -11,6 +11,9 @@ public final class BubblePlacement {
         int right = clampX(Integer.MAX_VALUE, screenWidth, bubbleWidth);
         return (long) clampX(x, screenWidth, bubbleWidth) * 2 < right ? 0 : right;
     }
+    public static int dockedX(boolean left, int screenWidth, int bubbleWidth) {
+        return left ? 0 : clampX(Integer.MAX_VALUE, screenWidth, bubbleWidth);
+    }
     public static boolean overlapsHorizontal(int bubbleLeft, int bubbleWidth, int stripLeft, int stripWidth) {
         return bubbleWidth > 0 && stripWidth > 0 && (long) bubbleLeft + bubbleWidth > stripLeft
                 && (long) stripLeft + stripWidth > bubbleLeft;

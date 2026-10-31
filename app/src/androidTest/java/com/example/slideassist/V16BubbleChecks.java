@@ -25,11 +25,12 @@ import java.util.List;
 
 /** Synthetic native preview checks; no rider app or cross-app gesture is invoked. */
 public final class V16BubbleChecks {
-    private static final String PREF = "bubble_opacity_percent";
+    private static final String PREF = "bubble_opacity_percent", SIZE_PREF = "bubble_size_dp";
     public static void run(Instrumentation i, Bundle result) {
         check("com.example.slideassist.fixture".equals(BuildConfig.TARGET_PACKAGE), "use the isolated fixture build");
         SharedPreferences preferences = i.getTargetContext().getSharedPreferences("assist_settings",0);
         boolean hadOpacity = preferences.contains(PREF); int originalOpacity = preferences.getInt(PREF,10);
+        boolean hadSize = preferences.contains(SIZE_PREF); int originalSize = preferences.getInt(SIZE_PREF,64);
         AudioManager audio = (AudioManager)i.getTargetContext().getSystemService(android.content.Context.AUDIO_SERVICE);
         check(audio != null, "audio manager unavailable before key tests");
         int[] streams = {AudioManager.STREAM_MUSIC, AudioManager.STREAM_RING, AudioManager.STREAM_SYSTEM,
@@ -37,21 +38,21 @@ public final class V16BubbleChecks {
         int[] levels = new int[streams.length];
         for (int n = 0; n < streams.length; n++) levels[n] = audio.getStreamVolume(streams[n]);
         List<Activity> opened = new ArrayList<>();
-        preferences.edit().remove(PREF).commit();
+        preferences.edit().remove(PREF).remove(SIZE_PREF).commit();
         try {
             Activity a = launch(i); opened.add(a);
             StatusBubbleView bubble = find(a.getWindow().getDecorView(),StatusBubbleView.class);
             check(bubble != null, "Main must display its own status control");
             ui(i, () -> {
                 float density = a.getResources().getDisplayMetrics().density;
-                check(bubble.getWidth() == Math.round(28 * density) && bubble.getHeight() == Math.round(28 * density),
-                        "Main status control must measure 28 by 28 dp, received "
+                check(bubble.getWidth() == Math.round(64 * density) && bubble.getHeight() == Math.round(64 * density),
+                        "Main status control must measure 64 by 64 dp, received "
                                 + bubble.getWidth()/density + " by " + bubble.getHeight()/density);
                 if (Build.VERSION.SDK_INT >= 29) {
                     List<Rect> exclusions = bubble.getSystemGestureExclusionRects();
-                    Rect ownBounds = new Rect(0,0,Math.round(28*density),Math.round(28*density));
+                    Rect ownBounds = new Rect(0,0,Math.round(64*density),Math.round(64*density));
                     check(exclusions.size()==1 && exclusions.contains(ownBounds),
-                            "edge dragging must exclude Back only inside the status control's own 28dp square");
+                            "edge dragging must exclude Back only inside the status control's own square");
                 }
                 alpha(bubble,.1f,"Main defaults to ten percent opacity");
                 ViewGroup parent = (ViewGroup)bubble.getParent();
@@ -61,6 +62,7 @@ public final class V16BubbleChecks {
             check(opacity.getMax() == 90 && opacity.getProgress() == 0, "visibility slider must map zero to ten percent and ninety to one hundred");
             changeOpacity(i,opacity,bubble,preferences,90,100);
             changeOpacity(i,opacity,bubble,preferences,45,55);
+            sizeControls(i,a,bubble,preferences);
             boolean before = active(bubble);
             tap(i,bubble); check(active(bubble)==before,"single tap must not change Main assistance");
             SystemClock.sleep(60); tap(i,bubble); check(active(bubble)==before,"double tap must not change Main assistance");
@@ -81,14 +83,20 @@ public final class V16BubbleChecks {
             check(restored!=null,"reopened Main status control missing");
             ui(i,()->alpha(restored,.55f,"visibility setting must survive reopening"));
             check(openMenu(i,reopened).getProgress()==45,"reopened visibility slider must show saved value");
+            SeekBar restoredSize=(SeekBar)reopened.getWindow().getDecorView().findViewWithTag("bubble_size");
+            check(restoredSize!=null && restoredSize.getProgress()==88,"reopened size slider must restore the selected120dp");
+            ui(i,()->bounds(restored,120,1));
             componentChecks(i,reopened);
-            result.putString("result","PASS compact bubble: actual Main 28x28dp and 10% default, menu 10/55/100% with persistence, exact triple taps and volume chord, cancellation/multi-pointer reset, free drag and left/right release docking, black phone control, enabled elapsed counter and opacity/state preservation with full accessible labels");
+            result.putString("result","PASS compact bubble: actual Main64dp default and32/64/120dp size control with persistence,10% opacity default, menu 10/55/100% with persistence, exact triple taps and volume chord, cancellation/multi-pointer reset, free drag and left/right release docking, black phone control, enabled elapsed counter and opacity/state preservation with full accessible labels");
         } finally {
             try {
                 ui(i,()->{for(Activity activity:opened)if(!activity.isFinishing())activity.finish();});
             } finally {
                 try {
-                    if(hadOpacity)preferences.edit().putInt(PREF,originalOpacity).commit(); else preferences.edit().remove(PREF).commit();
+                    SharedPreferences.Editor restore=preferences.edit();
+                    if(hadOpacity)restore.putInt(PREF,originalOpacity);else restore.remove(PREF);
+                    if(hadSize)restore.putInt(SIZE_PREF,originalSize);else restore.remove(SIZE_PREF);
+                    restore.commit();
                 } finally {
                     restoreAudio(audio,streams,levels);
                 }
@@ -120,6 +128,58 @@ public final class V16BubbleChecks {
         ui(i,()->slider.setProgress(progress));i.waitForIdleSync();
         ui(i,()->alpha(bubble,expected/100f,"visibility menu must immediately update preview"));
         check(preferences.getInt(PREF,-1)==expected,"visibility menu must save selected percentage");
+    }
+    private static void sizeControls(Instrumentation i,Activity a,StatusBubbleView bubble,SharedPreferences preferences) {
+        View tagged=a.getWindow().getDecorView().findViewWithTag("bubble_size");
+        check(tagged instanceof SeekBar,"size slider with stable control tag missing");
+        SeekBar size=(SeekBar)tagged;
+        check(size.isShown() && size.getMax()==88 && size.getProgress()==32,
+                "size control must expose32–120dp and default64dp");
+        SystemClock.sleep(1100);i.waitForIdleSync();
+        check(active(bubble),"size test must begin with the counter running");
+        changeSize(i,size,bubble,preferences,0,32,1);
+        triplePair(i,bubble);dragToEdge(i,bubble,.24f,0);
+        changeSize(i,size,bubble,preferences,88,120,0);
+        triplePair(i,bubble);dragToEdge(i,bubble,.78f,1);
+        changeSize(i,size,bubble,preferences,32,64,1);
+        changeSize(i,size,bubble,preferences,88,120,1);
+    }
+    private static void changeSize(Instrumentation i,SeekBar slider,StatusBubbleView bubble,
+                                   SharedPreferences preferences,int progress,int expected,int side) {
+        long[] before={0};ui(i,()->before[0]=elapsed(bubble));
+        ui(i,()->slider.setProgress(progress));i.waitForIdleSync();
+        ui(i,()->{
+            bounds(bubble,expected,side);
+            check(active(bubble) && elapsed(bubble)>=before[0],"live size changes must preserve the active timer epoch");
+            alpha(bubble,.55f,"size control must not modify opacity");
+            if(bubble.getLayout()!=null && bubble.getLayout().getLineCount()>0){
+                int line=bubble.getLayout().getLineCount()-1;
+                check(bubble.getLayout().getLineBottom(line)<=bubble.getHeight()-bubble.getTotalPaddingTop()-bubble.getTotalPaddingBottom(),
+                        "resized counter must remain vertically inside the phone control");
+            }
+        });
+        check(preferences.getInt(SIZE_PREF,-1)==expected,"size setting must save32/default64/maximum120dp");
+        check(preferences.getInt(PREF,-1)==55,"size setting must leave opacity preference unchanged");
+    }
+    private static void bounds(StatusBubbleView bubble,int expectedDp,int side) {
+        int size=Math.round(expectedDp*bubble.getResources().getDisplayMetrics().density);
+        check(bubble.getWidth()==size && bubble.getHeight()==size,"phone control size must immediately match selected dp");
+        View parent=(View)bubble.getParent();
+        near(side==0?0:parent.getWidth()-size,bubble.getX(),"resizing must preserve the chosen docked edge");
+        check(bubble.getY()>=0 && bubble.getY()+size<=parent.getHeight()+1,"resized phone control must remain on screen");
+        if(Build.VERSION.SDK_INT>=29){
+            List<Rect> exclusions=bubble.getSystemGestureExclusionRects();
+            check(exclusions.size()==1 && exclusions.contains(new Rect(0,0,size,size)),
+                    "Back exclusion must follow only the resized phone control");
+        }
+    }
+    private static void triplePair(Instrumentation i,StatusBubbleView bubble) {
+        ui(i,bubble::resetTapSequence);boolean before=active(bubble);
+        for(int n=0;n<6;n++){
+            if(n>0)SystemClock.sleep(60);tap(i,bubble);
+            if(n==2)check(active(bubble)!=before,"third tap must toggle at the selected size");
+        }
+        check(active(bubble)==before,"two complete triples restore the original state at min/max size");
     }
     private static void interruptedTapSequences(Instrumentation i,StatusBubbleView bubble) {
         ui(i,bubble::resetTapSequence); boolean before=active(bubble);
@@ -168,7 +228,7 @@ public final class V16BubbleChecks {
             FrameLayout host=new FrameLayout(a);a.setContentView(host);
             StatusBubbleView bubble=new StatusBubbleView(a);control[0]=bubble;
             float density=a.getResources().getDisplayMetrics().density;
-            host.addView(bubble,new FrameLayout.LayoutParams(Math.round(28*density),Math.round(28*density)));
+            host.addView(bubble,new FrameLayout.LayoutParams(Math.round(64*density),Math.round(64*density)));
             bubble.setOnClickListener(v->toggles[0]++);alpha(bubble,.1f,"new status control defaults to ten percent");
             for(int opacity:new int[]{10,35,100}){
                 bubble.setOpacityPercent(opacity);
@@ -183,7 +243,7 @@ public final class V16BubbleChecks {
             }
         });i.waitForIdleSync();
         timerChecks(i,control[0]);
-        ui(i,()->check(control[0].getWidth()*control[0].getHeight()<=Math.round(84*48*.21f*Math.pow(a.getResources().getDisplayMetrics().density,2)),"visible area is about one fifth"));
+        ui(i,()->{float density=a.getResources().getDisplayMetrics().density;check(control[0].getWidth()==Math.round(64*density) && control[0].getHeight()==Math.round(64*density),"standalone phone control follows the larger default geometry");});
         ui(i,()->check(!control[0].performClick() && toggles[0]==0,"one tap must not toggle"));SystemClock.sleep(60);
         ui(i,()->check(!control[0].performClick() && toggles[0]==0,"two taps must not toggle"));SystemClock.sleep(60);
         ui(i,()->check(control[0].performClick() && toggles[0]==1,"third tap toggles once"));

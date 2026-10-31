@@ -92,6 +92,24 @@ public final class MainActivity extends Activity {
         bubbleOptions.setOrientation(LinearLayout.VERTICAL);
         bubbleOptions.setVisibility(View.GONE);
         addTop(bubbleSettings, bubbleOptions, 4);
+        int bubbleSize = BubbleSettings.normalizeSizeDp(getSharedPreferences("assist_settings", MODE_PRIVATE)
+                .getInt(BubbleSettings.SIZE_PREF, BubbleSettings.DEFAULT_SIZE_DP));
+        TextView sizeLabel = text("浮标大小：" + bubbleSize + "dp", 14, INK, true);
+        addTop(bubbleOptions, sizeLabel, 4);
+        SeekBar sizeControl = new SeekBar(this);
+        sizeControl.setTag("bubble_size");
+        sizeControl.setMax(BubbleSettings.MAX_SIZE_DP - BubbleSettings.MIN_SIZE_DP);
+        sizeControl.setProgress(bubbleSize - BubbleSettings.MIN_SIZE_DP);
+        sizeControl.setContentDescription("浮标大小" + bubbleSize + "dp，范围32至120dp");
+        LinearLayout.LayoutParams sizeControlParams = new LinearLayout.LayoutParams(-1, dp(48));
+        sizeControlParams.topMargin = dp(4);
+        bubbleOptions.addView(sizeControl, sizeControlParams);
+        LinearLayout sizeLimits = row();
+        sizeLimits.addView(text("32dp 小", 12, MUTED, false), new LinearLayout.LayoutParams(0, -2, 1));
+        TextView sizeMax = text("120dp 大 · 默认64dp", 12, MUTED, false);
+        sizeMax.setGravity(Gravity.END);
+        sizeLimits.addView(sizeMax, new LinearLayout.LayoutParams(0, -2, 1));
+        addTop(bubbleOptions, sizeLimits, 0);
         int opacity = BubbleSettings.normalizeOpacityPercent(getSharedPreferences("assist_settings", MODE_PRIVATE)
                 .getInt(BubbleSettings.OPACITY_PREF, BubbleSettings.DEFAULT_OPACITY_PERCENT));
         TextView opacityLabel = text("浮标可见度：" + opacity + "% · 越低越透明", 14, INK, true);
@@ -101,19 +119,31 @@ public final class MainActivity extends Activity {
         opacityControl.setMax(BubbleSettings.MAX_OPACITY_PERCENT - BubbleSettings.MIN_OPACITY_PERCENT);
         opacityControl.setProgress(opacity - BubbleSettings.MIN_OPACITY_PERCENT);
         opacityControl.setContentDescription("浮标可见度" + opacity + "%，10%很淡，100%完全不透明");
-        opacityControl.setMinimumHeight(dp(48));
-        addTop(bubbleOptions, opacityControl, 4);
+        LinearLayout.LayoutParams opacityControlParams = new LinearLayout.LayoutParams(-1, dp(48));
+        opacityControlParams.topMargin = dp(4);
+        bubbleOptions.addView(opacityControl, opacityControlParams);
         LinearLayout opacityLimits = row();
         opacityLimits.addView(text("10% 很淡", 12, MUTED, false), new LinearLayout.LayoutParams(0, -2, 1));
         TextView opacityMax = text("100% 完全不透明", 12, MUTED, false);
         opacityMax.setGravity(Gravity.END);
         opacityLimits.addView(opacityMax, new LinearLayout.LayoutParams(0, -2, 1));
         addTop(bubbleOptions, opacityLimits, 0);
-        addTop(bubbleOptions, text("绿色电话下方出现计时表示辅助已开启，无计时表示关闭。连续轻点三次切换；拖动松手吸附左右边缘。可见度会保留，模拟页与真实辅助页共用。", 13, MUTED, false), 8);
+        addTop(bubbleOptions, text("绿色电话下方出现计时表示辅助已开启，无计时表示关闭。连续轻点三次切换；拖动松手吸附左右边缘。大小和可见度即时生效并保留，模拟页与真实辅助页共用。", 13, MUTED, false), 8);
         bubbleMenu.setOnClickListener(v -> {
             boolean show = bubbleOptions.getVisibility() != View.VISIBLE;
             bubbleOptions.setVisibility(show ? View.VISIBLE : View.GONE);
             bubbleMenu.setText(show ? "浮标设置 ▴" : "浮标设置 ▾");
+        });
+        sizeControl.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seek, int progress, boolean fromUser) {
+                int value = BubbleSettings.normalizeSizeDp(progress + BubbleSettings.MIN_SIZE_DP);
+                getSharedPreferences("assist_settings", MODE_PRIVATE).edit().putInt(BubbleSettings.SIZE_PREF, value).apply();
+                sizeLabel.setText("浮标大小：" + value + "dp");
+                seek.setContentDescription("浮标大小" + value + "dp，范围32至120dp");
+                resizeDemoBubble(value);
+            }
+            @Override public void onStartTrackingTouch(SeekBar seek) { }
+            @Override public void onStopTrackingTouch(SeekBar seek) { }
         });
         opacityControl.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar seek, int progress, boolean fromUser) {
@@ -288,8 +318,8 @@ public final class MainActivity extends Activity {
         };
         for (int i = 0; i < orders.length; i++) addOrder(page, orders[i], i + 1);
         demoBubble = new StatusBubbleView(this);
-        FrameLayout.LayoutParams bubblePosition = new FrameLayout.LayoutParams(dp(StatusBubbleView.WIDTH_DP),
-                dp(StatusBubbleView.HEIGHT_DP), Gravity.END | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams bubblePosition = new FrameLayout.LayoutParams(dp(bubbleSize),
+                dp(bubbleSize), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         content.addView(demoBubble, bubblePosition);
         demoBubble.setOpacityPercent(opacity);
         demoBubble.setActive(demoAssistEnabled);
@@ -336,6 +366,22 @@ public final class MainActivity extends Activity {
             }
         });
         refreshStatus();
+    }
+
+    private void resizeDemoBubble(int sizeDp) {
+        if (demoBubble == null) return;
+        View parent = (View) demoBubble.getParent();
+        int size = dp(BubbleSettings.normalizeSizeDp(sizeDp));
+        boolean left = BubblePlacement.snapX(Math.round(demoBubble.getX()),
+                parent.getWidth(), demoBubble.getWidth()) == 0;
+        FrameLayout.LayoutParams position = new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.LEFT);
+        position.leftMargin = left ? 0 : Math.max(0, parent.getWidth() - size);
+        position.topMargin = Math.max(dp(48), Math.min(Math.max(dp(48), parent.getHeight() - size - dp(24)),
+                Math.round(demoBubble.getY())));
+        // Convert any drag translation into layout coordinates before changing the size.
+        demoBubble.setTranslationX(0);
+        demoBubble.setTranslationY(0);
+        demoBubble.setLayoutParams(position);
     }
 
     private void addOrder(LinearLayout page, String[] order, int number) {

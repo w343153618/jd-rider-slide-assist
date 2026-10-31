@@ -33,6 +33,8 @@ public final class V16ServiceBubbleChecks {
         SharedPreferences preferences = i.getTargetContext().getSharedPreferences("assist_settings", 0);
         boolean hadOpacity = preferences.contains(BubbleSettings.OPACITY_PREF);
         int originalOpacity = preferences.getInt(BubbleSettings.OPACITY_PREF, 10);
+        boolean hadSize = preferences.contains(BubbleSettings.SIZE_PREF);
+        int originalSize = preferences.getInt(BubbleSettings.SIZE_PREF, BubbleSettings.DEFAULT_SIZE_DP);
         int[] oldGeometry = new int[3];
         boolean[] oldInitialized = {false};
         onMain(i, () -> {
@@ -42,6 +44,7 @@ public final class V16ServiceBubbleChecks {
             oldInitialized[0] = (boolean) field(service, AssistService.class, "geometryInitialized");
         });
         try {
+            preferences.edit().putInt(BubbleSettings.SIZE_PREF, BubbleSettings.DEFAULT_SIZE_DP).commit();
             for (int opacity : new int[]{10, 55, 100}) {
                 preferences.edit().putInt(BubbleSettings.OPACITY_PREF, opacity).commit();
                 onMain(i, () -> {
@@ -49,8 +52,8 @@ public final class V16ServiceBubbleChecks {
                     StatusBubbleView v = status(service);
                     WindowManager.LayoutParams lp = bubbleLayout(service);
                     float density = v.getResources().getDisplayMetrics().density;
-                    check(lp.width == Math.round(28 * density) && lp.height == Math.round(28 * density),
-                            "real status window must measure28x28dp");
+                    check(lp.width == Math.round(64 * density) && lp.height == Math.round(64 * density),
+                            "real status window must measure64x64dp");
                     check(Math.abs(v.getAlpha() - opacity / 100f) < .001f, "live service must apply persisted opacity");
                 });
             }
@@ -71,6 +74,7 @@ public final class V16ServiceBubbleChecks {
                 check(v.getElapsedActiveMillis() >= elapsed && Math.abs(v.getAlpha() - .55f) < .001f,
                         "same-ON service polling and opacity update must not restart the timer");
             });
+            for (int size : new int[]{32, 120, 64}) checkSize(i, service, preferences, size);
             String statusBeforeMovement = AssistService.getLastGestureStatus();
             int[] tokenBeforeMovement = {-1};
             onMain(i, () -> tokenBeforeMovement[0] = (int) field(service, AssistService.class, "lastGestureToken"));
@@ -111,6 +115,9 @@ public final class V16ServiceBubbleChecks {
                                 && !(boolean) field(service, AssistService.class, "gestureInFlight"),
                         "status operations must not dispatch order gestures");
             });
+            checkSize(i, service, preferences, 32);
+            checkSize(i, service, preferences, 120);
+            onMain(i, () -> check(bubbleLayout(service).x == 0, "live resize must preserve the left dock"));
             tap(i, service); check(AssistService.isAssistArmed(), "drag must clear the earlier two pending taps");
             onMain(i, () -> {
                 StatusBubbleView v = status(service); WindowManager.LayoutParams lp = bubbleLayout(service);
@@ -137,7 +144,7 @@ public final class V16ServiceBubbleChecks {
                             && !(boolean) field(service, AssistService.class, "injecting")
                             && !(boolean) field(service, AssistService.class, "gestureInFlight"),
                     "all control operations must finish without a new order gesture"));
-            result.putString("result", "PASS native service bubble: live10/55/100percent preferences,28x28dp window,visibleelapsedcounterpreservedbypolling/opacity,left/right docking,drag freeze,real horizontal overlap bounds,cancel/multiplepointers/no1or2/triple toggles,no order gesture dispatch");
+            result.putString("result", "PASS native service bubble: live10/55/100percent opacity,32/64/120dp sizepreferences,visibleelapsedcounterpreservedbypolling/opacity,left/right docking,drag freeze,real horizontal overlap bounds,cancel/multiplepointers/no1or2/triple toggles,no order gesture dispatch");
         } finally {
             onMain(i, () -> {
                 AssistService.stopAssist(); set(service, "x", oldGeometry[0]);
@@ -147,8 +154,33 @@ public final class V16ServiceBubbleChecks {
             SharedPreferences.Editor restore = preferences.edit();
             if (hadOpacity) restore.putInt(BubbleSettings.OPACITY_PREF, originalOpacity);
             else restore.remove(BubbleSettings.OPACITY_PREF);
+            if (hadSize) restore.putInt(BubbleSettings.SIZE_PREF, originalSize);
+            else restore.remove(BubbleSettings.SIZE_PREF);
             restore.commit();
+            onMain(i, () -> invoke(service, "updateStatusBubble"));
         }
+    }
+    private static void checkSize(Instrumentation i, Object service, SharedPreferences preferences, int size) throws Exception {
+        StatusBubbleView[] before = {null}; long[] elapsed = {0}; boolean[] left = {false};
+        onMain(i, () -> {
+            before[0] = status(service); elapsed[0] = before[0].getElapsedActiveMillis();
+            left[0] = bubbleLayout(service).x == 0;
+            preferences.edit().putInt(BubbleSettings.SIZE_PREF, size).commit();
+            invoke(service, "updateStatusBubble");
+        });
+        java.util.concurrent.CountDownLatch frames = new java.util.concurrent.CountDownLatch(1);
+        onMain(i, () -> before[0].postOnAnimation(() -> before[0].postOnAnimation(frames::countDown)));
+        check(frames.await(2, java.util.concurrent.TimeUnit.SECONDS), "resized service window did not settle");
+        onMain(i, () -> {
+            StatusBubbleView v = status(service); WindowManager.LayoutParams lp = bubbleLayout(service);
+            int px = Math.round(size * v.getResources().getDisplayMetrics().density);
+            int[] screen = (int[]) invoke(service, "screenSize");
+            check(v == before[0] && lp.width == px && lp.height == px && v.getWidth() == px && v.getHeight() == px,
+                    "live size must resize the same measured service view");
+            check(lp.x == (left[0] ? 0 : screen[0] - px) && lp.y >= 0 && lp.y + px <= screen[1],
+                    "size changes must preserve dock and clamp actual height");
+            check(v.getElapsedActiveMillis() >= elapsed[0], "live resize must preserve the active timer epoch");
+        });
     }
     private static void drag(Object service, int destinationCenterX, int destinationCenterY, boolean checkFrozen) throws Exception {
         StatusBubbleView v = status(service); WindowManager.LayoutParams lp = bubbleLayout(service);
@@ -157,11 +189,15 @@ public final class V16ServiceBubbleChecks {
         event(v, down, MotionEvent.ACTION_MOVE, destinationCenterX, destinationCenterY);
         int x = lp.x, y = lp.y;
         if (checkFrozen) {
+            int oldSize = lp.width;
+            v.getContext().getSharedPreferences("assist_settings", 0).edit().putInt(BubbleSettings.SIZE_PREF, 120).commit();
             invoke(service, "updateStatusBubble");
-            check(lp.x == x && lp.y == y, "foreground polling must not override active drag");
+            check(lp.x == x && lp.y == y && lp.width == oldSize, "foreground polling and size changes must not override active drag");
         }
         event(v, down, MotionEvent.ACTION_UP, destinationCenterX, destinationCenterY);
         check(AssistService.isAssistArmed(), "drag must preserve assistance state");
+        check(bubbleLayout(service).width == Math.round(120 * v.getResources().getDisplayMetrics().density),
+                "release must apply the deferred size preference");
     }
     private static void tap(Instrumentation i, Object service) {
         onMain(i, () -> {

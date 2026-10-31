@@ -18,6 +18,18 @@ public final class BubblePlacementTest {
         check(BubbleSettings.normalizeOpacityPercent(101) == 100, "opacity has full upper bound");
         check(BubbleSettings.normalizeOpacityPercent(35) == 35, "selected intermediate opacity is preserved");
         check(BubbleSettings.DEFAULT_OPACITY_PERCENT == 10, "default opacity stays ten percent");
+        check(BubbleSettings.DEFAULT_SIZE_DP == 64, "phone widget defaults to a readable64dp square");
+        check(BubbleSettings.normalizeSizeDp(0) == 32 && BubbleSettings.normalizeSizeDp(31) == 32,
+                "phone widget cannot be smaller than32dp");
+        check(BubbleSettings.normalizeSizeDp(32) == 32 && BubbleSettings.normalizeSizeDp(75) == 75,
+                "valid chosen size is preserved");
+        check(BubbleSettings.normalizeSizeDp(120) == 120 && BubbleSettings.normalizeSizeDp(Integer.MAX_VALUE) == 120,
+                "phone widget cannot exceed120dp");
+        check(BubblePlacement.dockedX(false, 360, 32) == 328
+                        && BubblePlacement.dockedX(false, 360, 120) == 240,
+                "changing size preserves the physical right edge");
+        check(BubblePlacement.dockedX(true, 360, 32) == 0 && BubblePlacement.dockedX(true, 360, 120) == 0,
+                "changing size preserves the physical left edge");
         check(!BubblePlacement.overlapsHorizontal(0, 36, 100, 250),
                 "left-docked bubble must not avoid a disjoint strip to its right");
         check(!BubblePlacement.overlapsHorizontal(324, 36, 0, 300),
