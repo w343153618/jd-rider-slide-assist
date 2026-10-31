@@ -34,4 +34,4 @@ Use case: logo-brand. Asset type: Android launcher app icon, square 1024 by 1024
 
 ## 验证范围
 
-已检查生成图、PNG尺寸与无alpha状态，并检查资源XML/Manifest引用。最终Android构建、安装与桌面自适应蒙版效果由主代理继续验证；图片已显示给用户，原始1254像素、1024源图和运行资源均已持久保存在项目内。
+已检查生成图、PNG尺寸与无alpha状态，并检查资源XML/Manifest引用。主代理已完成Android构建、正式覆盖升级及API37模拟器桌面应用列表/系统AppInfo的圆形蒙版检查，名称完整、主体和火焰无裁切；图片已显示给用户，原始1254像素、1024源图和运行资源均已持久保存在项目内。
