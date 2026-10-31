@@ -24,14 +24,15 @@ public final class GestureInstrumentation extends Instrumentation {
     private final java.util.Map<Integer, RadioButton> durationOptions = new java.util.HashMap<>();
     private android.widget.Button expandSettings;
     private View demoBubble;
-    private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest;
+    private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest, publishTest;
     private String pendingTest;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (publishTest) { testPublish(result); return; }
             if (pendingTest != null) { testPending(result); return; }
             if (updateTest) { testUpdate(result); return; }
             if (volumeTest) { testVolume(result); return; }
@@ -121,6 +122,46 @@ public final class GestureInstrumentation extends Instrumentation {
         boolean rejected=false; try { action.run(); } catch (Exception expected) { rejected=true; }
         check(rejected,message);
     }
+    private void testPublish(Bundle result) throws Exception {
+        android.content.Context c=getTargetContext();
+        byte[] data=("fixture payload " + java.util.UUID.randomUUID()).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        String digest=UpdateManager.hex(java.security.MessageDigest.getInstance("SHA-256").digest(data));
+        java.io.File target=UpdateApkProvider.updateFile(c,digest), dir=target.getParentFile();
+        check(dir.isDirectory() || dir.mkdirs(),"cannot create fixture update directory");
+        check(!target.exists(),"fixture digest unexpectedly exists");
+        java.io.File first=java.io.File.createTempFile("publish-first-", ".apk",dir);
+        java.io.File second=null;
+        try {
+            try(java.io.FileOutputStream out=new java.io.FileOutputStream(first)){out.write(data);}
+            // Caller verification is exercised separately; this test isolates filesystem publish.
+            UpdateManager.publishVerified(c,first,target,digest,"v9.9.9");
+            check(!first.exists() && target.isFile(),"new target must be published by rename");
+            try(android.os.ParcelFileDescriptor fd=c.getContentResolver().openFileDescriptor(UpdateApkProvider.updateUri(c,digest),"r");
+                java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)) {
+                java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream(); byte[] buf=new byte[128]; int n;
+                while((n=in.read(buf))!=-1) output.write(buf,0,n);
+                check(java.util.Arrays.equals(output.toByteArray(),data),"provider must read exactly published bytes");
+            }
+            byte[] existing="existing tampered bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            try(java.io.FileOutputStream out=new java.io.FileOutputStream(target)){out.write(existing);}
+            second=java.io.File.createTempFile("publish-second-", ".apk",dir);
+            try(java.io.FileOutputStream out=new java.io.FileOutputStream(second)){out.write(data);}
+            final java.io.File next=second;
+            rejects(() -> UpdateManager.publishVerified(c,next,target,digest,"v9.9.9"),"existing wrong digest must be rejected");
+            byte[] after=new byte[(int)target.length()];
+            try(java.io.FileInputStream in=new java.io.FileInputStream(target)) {
+                int offset=0, count; while(offset<after.length && (count=in.read(after,offset,after.length-offset))>0) offset+=count;
+                check(offset==after.length,"cannot read complete existing bytes");
+            }
+            check(java.util.Arrays.equals(after,existing),"existing file must never be overwritten");
+            check(second.exists(),"rejected temporary file must not be renamed over existing target");
+            result.putString("result","PASS verified file publication: new same-directory rename and read-only provider; existing wrong digest rejected without overwrite");
+        } finally {
+            if(first.exists()) first.delete(); if(second!=null && second.exists()) second.delete(); if(target.exists()) target.delete();
+        }
+        finish(Activity.RESULT_OK,result);
+    }
+
     private void testUpdate(Bundle result) throws Exception {
         check(UpdateManager.compare(UpdateManager.parseVersion("v1.2.0"),UpdateManager.parseVersion("1.1.9")) > 0, "version order");
         check(UpdateManager.compare(UpdateManager.parseVersion("1.2.0"),UpdateManager.parseVersion("v1.2.0")) == 0, "tag equivalence");

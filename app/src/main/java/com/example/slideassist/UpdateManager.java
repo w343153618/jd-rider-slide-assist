@@ -44,6 +44,7 @@ public final class UpdateManager {
     private static final String APK = "jd-rider-slide-assist.apk";
     private static final String SHA = APK + ".sha256";
     private static final int JSON_LIMIT = 512 * 1024, SHA_LIMIT = 4096, APK_LIMIT = 20 * 1024 * 1024;
+    private static final Object PUBLISH_LOCK = new Object();
     private static final Pattern VERSION = Pattern.compile("v?([0-9]{1,9})\\.([0-9]{1,9})\\.([0-9]{1,9})");
     private static final Pattern SHA_PATTERN = Pattern.compile("\\A\\s*([a-fA-F0-9]{64})(?:\\s+\\*?" + Pattern.quote(APK) + ")?\\s*\\z");
     private final WeakReference<Activity> activity;
@@ -149,16 +150,8 @@ public final class UpdateManager {
                 if (!hex(md.digest()).equals(expected)) throw new IOException("安装包校验值不一致");
                 verifyArchive(app, tmp, tag);
                 check(token);
-                // Link without replacement: an installer grant must always refer to the same bytes.
                 File immutable = UpdateApkProvider.updateFile(app, expected);
-                try {
-                    android.system.Os.link(tmp.getAbsolutePath(), immutable.getAbsolutePath());
-                } catch (android.system.ErrnoException e) {
-                    if (e.errno != android.system.OsConstants.EEXIST || !expected.equals(fileSha256(immutable)))
-                        throw new IOException("无法安全保存安装包");
-                    verifyArchive(app, immutable, tag);
-                }
-                if (!tmp.delete()) throw new IOException("无法清除临时文件");
+                publishVerified(app, tmp, immutable, expected, tag);
                 tmp = null;
                 post(token, () -> { end(); verifiedDigest = expected; verifiedTag = tag; verifiedReady = true; showInstallReady(); });
             } catch (Exception e) { fail(token, "更新下载或校验失败", e); }
@@ -346,6 +339,19 @@ public final class UpdateManager {
         int flags = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
         return c.getPackageManager().getPackageInfo(c.getPackageName(), flags);
     }
+    /** Publish within the same private directory; an existing digest path is never replaced. */
+    static void publishVerified(Context context, File temporary, File immutable, String digest, String tag) throws Exception {
+        synchronized (PUBLISH_LOCK) {
+            if (immutable.exists()) {
+                if (!digest.equals(fileSha256(immutable))) throw new IOException("已保存的安装包校验不一致");
+                verifyArchive(context, immutable, tag);
+                if (!temporary.delete()) throw new IOException("无法清除临时文件");
+            } else if (!temporary.renameTo(immutable)) {
+                throw new IOException("无法安全保存安装包");
+            }
+        }
+    }
+
     private static String fileSha256(File file) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         if (!file.isFile() || file.length() > APK_LIMIT) throw new IOException("保存的安装包无效");
