@@ -41,4 +41,14 @@ adb shell am instrument -w -r -e lifecycle 1 \
   com.example.slideassist.testfixture.test/com.example.slideassist.GestureInstrumentation
 ```
 
-测试会核验前置权限状态，创建并清理自己持有的文件，不操作生产应用。结束已恢复测试前无障碍 null/0、fixture 安装授权 default，adb 为普通 shell，临时测试 APK 已删除。生产1.3.1保持不变，等待正式签名升级验证。
+测试会核验前置权限状态，创建并清理自己持有的文件，不操作生产应用。隔离测试结束已恢复测试前无障碍 null/0、fixture 安装授权 default，adb 为普通 shell，临时测试 APK 已删除。
+
+## 最终构建与正式包验收
+
+主机 VolumeKeyChordTest、SwipeTimingTest、UpdatePolicyTest 全部通过；debug/release 构建和 Android Lint 均通过，分别为0 errors、21 warnings。21项警告主要为SDK目标版本、旧API、无障碍点击语义、绘图分配及文本/布局提示，本次没有为了消除警告扩大功能改动。
+
+正式签名与1.3.1保持一致。GitHub v1.3.2 发布包含 APK、SHA-256 和 update.json；发布APK摘要与本地产物一致：`04ec4cf7d5602e2bdcf91fffc40d5b917d4d9a72fca8ce88aea9d408cf8b4c95`。
+
+模拟器使用生产1.3.1中的“检查更新 / 升级”入口，实际下载并校验GitHub的1.3.2，经过Android系统“Update this app?”确认后成功升级；PackageManager及界面同时显示1.3.2/code7。正式安装包中再分别点击两张尚未完成的模拟订单，两条都变为模拟成功，状态球仍显示已开启。此次连续操作没有重开辅助开关，也没有以adb安装代替最终的系统升级步骤。
+
+模拟器最终保留正式1.3.2供体验；测试夹具的无障碍和安装权限已恢复，生产应用的安装来源权限继续保留用于用户主动升级。真实骑士客户端未安装，本次结论仍限于模拟页面、自有接收端和应用更新流程。
