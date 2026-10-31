@@ -9,9 +9,12 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
@@ -66,6 +69,7 @@ public class AssistService extends AccessibilityService {
     private int y;
     private boolean geometryInitialized;
     private int targetWindowId = -1;
+    private InteractionRecorder.Trace pendingToolTrace;
     private final Runnable armTimeout = () -> {
         if (armed && !seenTarget) { stopInternal(false); toast("等待目标应用超时，辅助已关闭"); }
     };
@@ -305,11 +309,16 @@ public class AssistService extends AccessibilityService {
                     downX = event.getRawX(); downY = event.getRawY();
                     originalY = bubbleY; moved = false; return true;
                 case MotionEvent.ACTION_POINTER_DOWN:
-                    moved = true; return true;
+                    moved = true;
+                    if (statusBubble != null) statusBubble.resetTapSequence();
+                    return true;
                 case MotionEvent.ACTION_MOVE:
                     float dx = event.getRawX() - downX, dy = event.getRawY() - downY;
                     int slop = ViewConfiguration.get(AssistService.this).getScaledTouchSlop();
-                    if (dx * dx + dy * dy > slop * slop) moved = true;
+                    if (dx * dx + dy * dy > slop * slop) {
+                        moved = true;
+                        if (statusBubble != null) statusBubble.resetTapSequence();
+                    }
                     if (moved && statusBubble != null && bubbleLayout != null) {
                         bubbleY = clampBubbleY(originalY + Math.round(dy));
                         bubbleLayout.y = bubbleY;
@@ -321,6 +330,8 @@ public class AssistService extends AccessibilityService {
                     if (moved) avoidBubbleOverlap(); else view.performClick();
                     return true;
                 case MotionEvent.ACTION_CANCEL:
+                    moved = true;
+                    if (statusBubble != null) statusBubble.resetTapSequence();
                     return true;
                 default:
                     return true;
@@ -385,16 +396,16 @@ public class AssistService extends AccessibilityService {
         overlay.addView(column);
         LinearLayout header = new LinearLayout(this);
         header.setBackgroundColor(0xff7a4100);
-        TextView move = label("按住移动 · 对齐抢单条", 13);
+        TextView move = label("按住移动 · 对齐整个橙条", 13);
         header.addView(move, new LinearLayout.LayoutParams(0, dp(38), 1));
         TextView close = label("关闭 ×", 14);
         header.addView(close, new LinearLayout.LayoutParams(dp(66), dp(38)));
         column.addView(header);
-        touchArea = new View(this);
+        touchArea = new HandleGuideView();
         touchArea.setBackground(shape(0x448e5900, 0xffffa000, 5));
         String mode = getSharedPreferences(PREFS, MODE_PRIVATE).getString("trigger_mode", "immediate");
-        touchArea.setContentDescription("gestures".equals(mode) ? "手势辅助区域：双击或双指单击"
-                : "release".equals(mode) ? "手势辅助区域：按下后抬起滑动" : "手势辅助区域：按下立即滑动");
+        touchArea.setContentDescription("gestures".equals(mode) ? "白箭头辅助区域：从左侧白框内双击或双指单击"
+                : "release".equals(mode) ? "白箭头辅助区域：左侧白框内按下后抬起滑动" : "白箭头辅助区域：左侧白框内按下立即滑动");
         column.addView(touchArea, new LinearLayout.LayoutParams(-1, areaHeight));
         TextView resize = label("↘ 按住调整宽度与高度", 12);
         resize.setBackgroundColor(0xff7a4100);
@@ -414,6 +425,29 @@ public class AssistService extends AccessibilityService {
             avoidBubbleOverlap();
         }
         catch (RuntimeException e) { overlay = null; touchArea = null; stopInternal(false); toast("无法显示辅助区域，请重新开启无障碍服务"); }
+    }
+
+    /** Manual alignment guide, using exactly the practice slider's white-handle geometry. */
+    private final class HandleGuideView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        HandleGuideView() { super(AssistService.this); }
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            SliderGeometry g = new SliderGeometry(getWidth(), getHeight(), getResources().getDisplayMetrics().density);
+            paint.setColor(Color.WHITE);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(2));
+            canvas.drawRoundRect(new RectF(g.thumbLeft(), g.thumbTop(), g.thumbRight(), g.thumbBottom()),
+                    g.cornerRadius(), g.cornerRadius(), paint);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(dp(26));
+            canvas.drawText("››", (g.thumbLeft() + g.thumbRight()) / 2,
+                    getHeight() / 2f - (paint.ascent() + paint.descent()) / 2, paint);
+            paint.setTextSize(dp(12));
+            canvas.drawText("仅左侧白箭头内起手", (g.thumbRight() + getWidth()) / 2,
+                    getHeight() / 2f - (paint.ascent() + paint.descent()) / 2, paint);
+        }
     }
 
     private final class TransformTouch implements View.OnTouchListener {
@@ -459,6 +493,8 @@ public class AssistService extends AccessibilityService {
         private boolean valid;
         private boolean releaseMode;
         private boolean releasePending;
+        private SwipePlan plan;
+        private InteractionRecorder.Trace trace;
 
         private boolean inside(View v, float x, float y) {
             return x >= 0 && y >= 0 && x < v.getWidth() && y < v.getHeight();
@@ -478,27 +514,43 @@ public class AssistService extends AccessibilityService {
         @Override public boolean onTouch(View view, MotionEvent e) {
             int action = e.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
+                finishTrace(trace, "cancelled");
+                trace = TouchCapture.begin("service_assist", e, 0, getResources().getDisplayMetrics().density);
+                pendingToolTrace = trace;
+                if (trace != null) trace.mark("down", e.getEventTime());
                 downTime = e.getEventTime(); maxPointers = 1;
                 ids[0] = e.getPointerId(0); ids[1] = -1;
                 xs[0] = e.getX(0); ys[0] = e.getY(0);
-                valid = inside(view, xs[0], ys[0]);
+                SliderGeometry geometry = new SliderGeometry(view.getWidth(), view.getHeight(), getResources().getDisplayMetrics().density);
+                valid = geometry.inHandle(xs[0], ys[0]);
+                plan = null;
+                if (valid) {
+                    int[] location = new int[2];
+                    view.getLocationOnScreen(location);
+                    Rect bounds = new Rect(location[0], location[1], location[0] + view.getWidth(), location[1] + view.getHeight());
+                    plan = new SwipePlan(bounds, geometry.fromLocal(xs[0], ys[0], location[0], location[1]), generation, trace);
+                }
                 if (!valid) previousTap = 0;
                 String mode = getSharedPreferences(PREFS, MODE_PRIVATE).getString("trigger_mode", "immediate");
                 releaseMode = "release".equals(mode);
                 releasePending = releaseMode && valid;
                 if (valid && !releaseMode && !"gestures".equals(mode)) {
                     previousTap = 0;
-                    injectSwipe();
+                    activate();
                 }
                 return true;
             }
+            TouchCapture.append(trace, e, e.findPointerIndex(ids[0]));
             if (releaseMode) {
                 if (action == MotionEvent.ACTION_CANCEL) {
                     releasePending = false;
+                    finishTrace(trace, "cancelled"); trace = null;
                 } else if ((action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP)
                         && e.getPointerId(e.getActionIndex()) == ids[0] && releasePending) {
                     releasePending = false;
-                    injectSwipe();
+                    activate();
+                } else if (action == MotionEvent.ACTION_UP) {
+                    finishTrace(trace, "ignored"); trace = null;
                 }
                 return true;
             }
@@ -509,39 +561,82 @@ public class AssistService extends AccessibilityService {
                 else { ids[1] = e.getPointerId(i); xs[1] = e.getX(i); ys[1] = e.getY(i); }
                 previousTap = 0;
             }
-            if (action == MotionEvent.ACTION_CANCEL) { valid = false; previousTap = 0; return true; }
+            if (action == MotionEvent.ACTION_CANCEL) {
+                valid = false; previousTap = 0;
+                finishTrace(trace, "cancelled"); trace = null; return true;
+            }
             checkPointers(view, e); // Includes pointer-down, each movement and each lift.
             if (action == MotionEvent.ACTION_UP) {
                 long now = e.getEventTime();
-                if (!valid || now - downTime > 350) { previousTap = 0; return true; }
-                if (maxPointers == 2) { previousTap = 0; injectSwipe(); }
+                if (!valid || now - downTime > 350) {
+                    previousTap = 0; finishTrace(trace, "ignored"); trace = null; return true;
+                }
+                if (maxPointers == 2) { previousTap = 0; activate(); }
                 else if (maxPointers == 1) {
                     float dx = xs[0] - previousX, dy = ys[0] - previousY;
                     int slop = ViewConfiguration.get(AssistService.this).getScaledDoubleTapSlop();
                     if (previousTap != 0 && downTime >= previousTap &&
                             downTime - previousTap <= ViewConfiguration.getDoubleTapTimeout()
                             && dx * dx + dy * dy <= slop * slop) {
-                        previousTap = 0; injectSwipe();
-                    } else { previousTap = now; previousX = xs[0]; previousY = ys[0]; }
+                        previousTap = 0; activate();
+                    } else {
+                        previousTap = now; previousX = xs[0]; previousY = ys[0];
+                        finishTrace(trace, "tap_wait"); trace = null;
+                    }
                 }
             }
             return true;
         }
+
+        private void activate() {
+            SwipePlan request = plan;
+            plan = null;
+            if (pendingToolTrace == trace) pendingToolTrace = null;
+            trace = null; // The asynchronous dispatch owns this trace after removing the window.
+            if (request != null) injectSwipe(request);
+        }
     }
 
-    private void injectSwipe() {
-        if (injecting) return;
+    private static final class SwipePlan {
+        final Rect bounds;
+        final SliderGeometry.Swipe path;
+        final int generation;
+        final InteractionRecorder.Trace trace;
+        SwipePlan(Rect bounds, SliderGeometry.Swipe path, int generation, InteractionRecorder.Trace trace) {
+            this.bounds = bounds; this.path = path; this.generation = generation; this.trace = trace;
+        }
+    }
+
+    private void markTrace(InteractionRecorder.Trace trace, String phase) {
+        if (trace != null) trace.mark(phase, SystemClock.uptimeMillis());
+    }
+
+    private void finishTrace(InteractionRecorder.Trace trace, String outcome) {
+        if (trace != null) {
+            long now = SystemClock.uptimeMillis();
+            trace.mark(outcome, now);
+            trace.finish(outcome, now);
+        }
+    }
+
+    private void injectSwipe(SwipePlan plan) {
+        markTrace(plan.trace, "trigger");
+        if (injecting || gestureInFlight || plan.generation != generation) {
+            finishTrace(plan.trace, "rejected"); return;
+        }
         int token = ++generation;
         lastGestureToken = token;
         lastGestureStatus = "rejected"; // Remains rejected unless Android accepts the dispatch.
         if (!armed || overlay == null || touchArea == null || !targetIsForeground()) {
+            finishTrace(plan.trace, "rejected");
             stopInternal(false); toast("目标应用不可见，辅助已关闭"); return;
         }
         int[] location = new int[2]; touchArea.getLocationOnScreen(location);
         Rect bounds = new Rect(location[0], location[1], location[0] + touchArea.getWidth(), location[1] + touchArea.getHeight());
         int[] screen = screenSize();
-        if (bounds.left < 0 || bounds.top < 0 || bounds.right > screen[0] || bounds.bottom > screen[1]
+        if (!bounds.equals(plan.bounds) || bounds.left < 0 || bounds.top < 0 || bounds.right > screen[0] || bounds.bottom > screen[1]
                 || bounds.width() < dp(140) || bounds.height() < dp(32)) {
+            finishTrace(plan.trace, "rejected");
             toast("请将辅助区域完整放在屏幕内并对齐滑条"); return;
         }
         View removedView = overlay;
@@ -551,48 +646,54 @@ public class AssistService extends AccessibilityService {
         boolean areaRemoved = removeOverlay();
         boolean bubbleRemoved = removeStatusBubble();
         if (!areaRemoved || !bubbleRemoved) {
+            finishTrace(plan.trace, "rejected");
             stopInternal(false); toast("无法移除辅助窗口，未执行滑动"); return;
         }
         // removeViewImmediate detaches the local view, but input dispatch may lag behind.
         // Await two display frames and verify detachment before injecting. Some Android
         // builds omit an app's own accessibility overlay from getWindows().
-        waitForOverlayRemoval(token, bounds, removedView, removedBubble, SystemClock.uptimeMillis() + 600, false);
+        waitForOverlayRemoval(token, plan, removedView, removedBubble, SystemClock.uptimeMillis() + 600, false);
     }
 
-    private void waitForOverlayRemoval(int token, Rect bounds, View removedView, View removedBubble, long deadline, boolean detachedOnPreviousFrame) {
+    private void waitForOverlayRemoval(int token, SwipePlan plan, View removedView, View removedBubble, long deadline, boolean detachedOnPreviousFrame) {
         Choreographer.getInstance().postFrameCallback(frameTime -> {
-            if (!armed || token != generation) return;
+            if (!armed || token != generation) { finishTrace(plan.trace, "cancelled"); return; }
             if (!targetIsForeground()) {
+                finishTrace(plan.trace, "rejected");
                 stopInternal(false); toast("目标页面已变化，未执行滑动"); return;
             }
             if (SystemClock.uptimeMillis() > deadline) {
+                finishTrace(plan.trace, "rejected");
                 stopInternal(false); toast("辅助窗口未及时关闭，未执行滑动"); return;
             }
             boolean detached = !removedView.isAttachedToWindow() && (removedBubble == null || !removedBubble.isAttachedToWindow());
             if (!detached || !detachedOnPreviousFrame) {
-                waitForOverlayRemoval(token, bounds, removedView, removedBubble, deadline, detached);
+                waitForOverlayRemoval(token, plan, removedView, removedBubble, deadline, detached);
                 return;
             }
-            dispatchSwipe(token, bounds);
+            markTrace(plan.trace, "window_removed");
+            dispatchSwipe(token, plan);
         });
     }
 
-    private void dispatchSwipe(int token, Rect bounds) {
+    private void dispatchSwipe(int token, SwipePlan plan) {
         if (!armed || token != generation || !targetIsForeground()) {
+            finishTrace(plan.trace, "rejected");
             stopInternal(false); toast("目标应用已离开，未执行滑动"); return;
         }
-        float inset = Math.min(bounds.height() / 2f, bounds.width() * .09f);
-        float center = bounds.exactCenterY();
-        Path path = new Path(); path.moveTo(bounds.left + inset, center); path.lineTo(bounds.right - inset, center);
+        // MotionEvent coordinates are local; this plan freezes their screen translation at DOWN.
+        // https://developer.android.com/reference/android/view/MotionEvent#getX(int)
+        Path path = new Path(); path.moveTo(plan.path.startX, plan.path.startY); path.lineTo(plan.path.endX, plan.path.endY);
         GestureDescription g = new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path, 0, SwipeTiming.normalize(
                 getSharedPreferences(PREFS, MODE_PRIVATE).getInt("swipe_duration_ms", 250)))).build();
         try {
+            markTrace(plan.trace, "dispatch");
             gestureDispatched = true;
             gestureInFlight = true;
             gestureInFlightToken = token;
             boolean accepted = dispatchGesture(g, new GestureResultCallback() {
-                @Override public void onCompleted(GestureDescription gesture) { finishSwipe(token, "completed"); }
-                @Override public void onCancelled(GestureDescription gesture) { finishSwipe(token, "cancelled"); }
+                @Override public void onCompleted(GestureDescription gesture) { finishTrace(plan.trace, "completed"); finishSwipe(token, "completed"); }
+                @Override public void onCancelled(GestureDescription gesture) { finishTrace(plan.trace, "cancelled"); finishSwipe(token, "cancelled"); }
             }, handler);
             if (accepted) {
                 lastGestureStatus = "accepted";
@@ -601,12 +702,14 @@ public class AssistService extends AccessibilityService {
                             "accepted".equals(lastGestureStatus)) {
                         lastGestureStatus = "timeout";
                         lastGestureToken = -1;
+                        finishTrace(plan.trace, "timeout");
                         stopInternal(false);
                         toast("未收到系统结果，请核对订单并重新开启无障碍服务");
                     }
                 }, 2000);
-            } else finishSwipe(token, "rejected");
+            } else { finishTrace(plan.trace, "rejected"); finishSwipe(token, "rejected"); }
         } catch (RuntimeException e) {
+            finishTrace(plan.trace, "rejected");
             finishSwipe(token, "rejected");
         }
     }
@@ -631,6 +734,7 @@ public class AssistService extends AccessibilityService {
     }
 
     private void stopInternal(boolean notify) {
+        finishTrace(pendingToolTrace, "cancelled"); pendingToolTrace = null;
         generation++; armed = false; seenTarget = false; injecting = false; gestureDispatched = false; geometryInitialized = false; targetWindowId = -1;
         handler.removeCallbacks(foregroundCheck); handler.removeCallbacks(armTimeout); removeOverlay();
         updateStatusBubble();

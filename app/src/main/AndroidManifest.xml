@@ -19,6 +19,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name="com.example.slideassist.SpeedTestActivity" android:exported="false" />
         <provider android:name="com.example.slideassist.UpdateApkProvider"
             android:authorities="${applicationId}.updates"
             android:exported="false"

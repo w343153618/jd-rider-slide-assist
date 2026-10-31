@@ -13,7 +13,7 @@ import android.widget.TextView;
 public final class FixtureActivity extends Activity {
     private TextView status;
     private int moves, completedSwipes;
-    private float startX;
+    private float startX, startY;
     private long downTime;
 
     @Override public void onCreate(Bundle saved) {
@@ -40,7 +40,7 @@ public final class FixtureActivity extends Activity {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 moves = 0;
-                startX = event.getX();
+                startX = event.getX(); startY = event.getY();
                 downTime = event.getEventTime();
                 Log.i("SlideFixture", "DOWN");
 
@@ -52,7 +52,7 @@ public final class FixtureActivity extends Activity {
                 int distance = Math.round(event.getX() - startX);
                 long duration = event.getEventTime() - downTime;
                 if (moves > 0 && distance > 100) completedSwipes++;
-                Log.i("SlideFixture", "UP count=" + completedSwipes + " moves=" + moves + " dx=" + distance + " duration=" + duration);
+                Log.i("SlideFixture", "UP count=" + completedSwipes + " moves=" + moves + " dx=" + distance + " duration=" + duration + " sx=" + startX + " sy=" + startY + " ex=" + event.getX() + " ey=" + event.getY());
                 status.setText("完成滑动总数 " + completedSwipes + "，最近移动 " + moves + " 次，水平位移 " + distance + " 像素");
                 break;
             case MotionEvent.ACTION_CANCEL:

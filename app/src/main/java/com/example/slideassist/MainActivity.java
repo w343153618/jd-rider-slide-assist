@@ -34,6 +34,7 @@ public final class MainActivity extends Activity {
     private boolean demoAssistEnabled = true;
     private final VolumeKeyChord demoKeys = new VolumeKeyChord();
     private UpdateManager updater;
+    private Button speedTest;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -74,6 +75,10 @@ public final class MainActivity extends Activity {
         upgrade.setOnClickListener(v -> updater.checkForUpdate());
         versionRow.addView(upgrade, new LinearLayout.LayoutParams(dp(142), dp(48)));
         addTop(page, versionRow, 10);
+        speedTest = button("手速测试与轨迹报告", true);
+        speedTest.setOnClickListener(v -> startActivity(new Intent(this, SpeedTestActivity.class)));
+        addTop(page, speedTest, 10);
+        addTop(page, text("可手动拖动测速、查看轨迹慢放和逐点数据；只有点击开始记录后才采集本工具内的数据。", 13, MUTED, false), 6);
 
         LinearLayout setup = card();
         addTop(page, setup, 20);
@@ -163,10 +168,10 @@ public final class MainActivity extends Activity {
         });
         addTop(setupDetails, text("时长控制拖动过程，不增加触发前的等待。模拟订单也采用所选时长。", 14, MUTED, false), 4);
         addTop(setupDetails, text("音量键快捷开关", 15, INK, true), 14);
-        TextView shortcut = text("先开启无障碍服务。在骑士页面，同时短按音量＋和音量－，开启或关闭辅助。也可点按贴边状态球切换，或上下拖动状态球。开启后仍需对齐滑条并亲自触发；每次滑动结束会自动关闭。两键全部松开后才能再次切换。\n正常音量可能变化；请勿长按，以免触发系统快捷方式。若手机无法接收组合键，可使用状态球或下方按钮。", 14, MUTED, false);
+        TextView shortcut = text("先开启无障碍服务。在骑士页面，同时短按音量＋和音量－，开启或关闭辅助。也可连续轻点贴边状态球三次切换，或上下拖动状态球。单击、双击不切换。开启后对齐完整橙色滑条和左侧白色箭头块；只有从白色块内按下才触发，并从最初按下的位置向右拖。每次滑动结束会自动关闭。两键全部松开后才能再次切换。\n正常音量可能变化；请勿长按，以免触发系统快捷方式。若手机无法接收组合键，可使用状态球或下方按钮。", 14, MUTED, false);
         shortcut.setLineSpacing(dp(2), 1f);
         addTop(setupDetails, shortcut, 6);
-        TextView setupHint = text("开启无障碍服务后，启动辅助会打开京东秒送骑士。将浮层移动、调整至完整对齐所选订单的抢单条，浮层会遮挡其下触摸。按下模式一接触就执行；抬起模式在最初的手指抬起时执行。滚动列表请从区域外起手。每次触发、离开应用或滚动列表后辅助会关闭，需重新启动和对齐。", 14, MUTED, false);
+        TextView setupHint = text("启动辅助会打开京东秒送骑士。人工移动、调整浮层对齐完整抢单条，并核对白色触发框与左侧箭头块重合。只有白色块内起手才触发；橙色其余位置或外起手移入不触发。浮层会遮挡其下触摸，滚动列表请从浮层外起手。每次触发、离开应用或滚动列表后真实辅助会关闭，需重新开启和对齐。", 14, MUTED, false);
         setupHint.setLineSpacing(dp(2), 1f);
         addTop(setupDetails, setupHint, 10);
         LinearLayout row1 = row();
@@ -217,17 +222,24 @@ public final class MainActivity extends Activity {
         demoBubble.setActive(demoAssistEnabled);
         demoBubble.setOnClickListener(v -> setDemoAssistEnabled(!demoAssistEnabled));
         demoBubble.setOnTouchListener(new View.OnTouchListener() {
-            float startY, initialY;
+            float startX, startY, initialY;
             boolean dragged;
             @Override public boolean onTouch(View view, MotionEvent event) {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                    startY = event.getRawY(); initialY = view.getY(); dragged = false; return true;
+                    startX = event.getRawX(); startY = event.getRawY(); initialY = view.getY(); dragged = false; return true;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
                     float delta = event.getRawY() - startY;
-                    if (Math.abs(delta) > ViewConfiguration.get(MainActivity.this).getScaledTouchSlop()) dragged = true;
+                    if (Math.hypot(event.getRawX() - startX, delta) > ViewConfiguration.get(MainActivity.this).getScaledTouchSlop()) {
+                        dragged = true;
+                        demoBubble.resetTapSequence();
+                    }
                     if (dragged) view.setY(Math.max(dp(48), Math.min(content.getHeight() - dp(80), initialY + delta)));
                     return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                    dragged = true;
+                    demoBubble.resetTapSequence();
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP && !dragged) view.performClick();
                 return true;
@@ -280,15 +292,15 @@ public final class MainActivity extends Activity {
     private void updateDemoHint(String mode) {
         if (demoHint == null) return;
         if (!demoAssistEnabled) {
-            demoHint.setText("练习辅助已关闭。点击贴边状态球或同时短按音量加减键开启；关闭时仍可从左侧手动拖动。状态球仅控制本页练习，不操作真实订单。");
+            demoHint.setText("练习辅助已关闭。连续轻点贴边状态球三次，或同时短按音量加减键开启；关闭时仍可从左侧白色手柄手动拖动。状态球仅控制本页练习，不操作真实订单。");
             return;
         }
         String instruction = "gestures".equals(mode)
-                ? "以下均为虚构订单，不会产生真实接单。在橙色区域单指双击、双指轻点，或从左侧向右滑动。"
+                ? "以下均为虚构订单，不会产生真实接单。从左侧白色箭头块内单指双击、双指轻点，或从白色块向右手动拖动。"
                 : "release".equals(mode)
-                ? "以下均为虚构订单，不会产生真实接单。在橙色区域按下，最初的手指抬起时即模拟抢单；滚动列表请从橙色区域外起手。"
-                : "以下均为虚构订单，不会产生真实接单。手指一按下橙色区域就会模拟抢单；滚动列表请从橙色区域外起手。";
-        demoHint.setText("练习辅助已开启。点按贴边状态球可关闭，按住可上下移动。完成一条后可继续练习其他订单；同一条可点“重置本条练习”再次练习。状态球仅控制本页练习。\n" + instruction);
+                ? "以下均为虚构订单，不会产生真实接单。在左侧白色箭头块内按下，最初的手指抬起时即模拟抢单；起点使用最初按下坐标。"
+                : "以下均为虚构订单，不会产生真实接单。手指一按下左侧白色箭头块就从该位置向右辅助拖动；橙色其他位置不触发。";
+        demoHint.setText("练习辅助已开启。连续轻点贴边状态球三次可关闭，按住可上下移动。完成一条后可继续练习其他订单；同一条可点“重置本条练习”再次练习。状态球仅控制本页练习。\n" + instruction);
     }
 
     void setDemoAssistEnabled(boolean enabled) {
@@ -314,11 +326,13 @@ public final class MainActivity extends Activity {
         refreshStatus();
         if (updater != null) updater.resumePendingInstall();
     }
-    @Override protected void onPause() { demoKeys.reset(); super.onPause(); }
+    @Override protected void onPause() { demoKeys.reset(); if (demoBubble != null) demoBubble.resetTapSequence(); super.onPause(); }
     @Override protected void onDestroy() { if (updater != null) updater.destroy(); super.onDestroy(); }
 
     private void refreshStatus() {
         if (connection == null || target == null) return;
+        if (speedTest != null) speedTest.setText(InteractionRecorder.isRecording()
+                ? "手速测试与轨迹报告 · 记录中" : "手速测试与轨迹报告");
         connection.setText(AssistService.isConnected()
                 ? "无障碍服务：已开启 · 辅助" + (AssistService.isAssistArmed() ? "已激活" : "已关闭")
                 : "无障碍服务：未开启（快捷键暂不可用）");

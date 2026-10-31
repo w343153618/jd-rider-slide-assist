@@ -26,13 +26,14 @@ public final class GestureInstrumentation extends Instrumentation {
     private View demoBubble;
     private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest, publishTest;
     private String pendingTest;
-    private boolean lifecycleTest;
+    private boolean lifecycleTest, v14Test;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (v14Test) { V14Checks.run(this,result); finish(Activity.RESULT_OK,result); return; }
             if (lifecycleTest) { UpdateLifecycleChecks.run(this, result); finish(Activity.RESULT_OK, result); return; }
             if (publishTest) { testPublish(result); return; }
             if (pendingTest != null) { testPending(result); return; }
@@ -55,6 +56,7 @@ public final class GestureInstrumentation extends Instrumentation {
             check(durationOptions.get(250).isChecked(), "250ms must be selected by default");
             DemoSliderView one = sliders.get(0), two = sliders.get(1);
             select(one); outsideTap(one); pause(); check(!done(one), "touch outside slider must not complete");
+            orangeTap(one); pause(); check(!done(one), "orange area outside white handle must not trigger");
             select(one); outsideDragIn(one); pause(); check(!done(one), "outside start dragged into slider must not complete");
             select(one); downHeld(one); check(done(one), "default mode must complete on down before release");
             check(!done(two), "completing first demo order must leave second order untouched");
@@ -63,11 +65,11 @@ public final class GestureInstrumentation extends Instrumentation {
             resetFromButton(one); select(one); tap(one); pause(); check(done(one), "reset button must allow the same order to be practiced again");
             check(done(two), "resetting first demo order must preserve second order completion");
             resetFromButton(one); resetFromButton(two);
-            runOnMainSync(() -> demoBubble.performClick());
+            tripleClick(demoBubble);
             check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭"), "demo bubble click must turn assistance off");
             select(one); tap(one); pause(); check(!done(one), "OFF demo bubble must prevent assisted tap on first order");
             select(two); tap(two); pause(); check(!done(two), "OFF demo bubble must prevent assisted tap on another order");
-            runOnMainSync(() -> demoBubble.performClick());
+            tripleClick(demoBubble);
             check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已开启"), "demo bubble should turn on when clicked");
             select(two); tap(two); pause(); check(done(two), "turning assistance back on must allow another order to complete");
             check(!done(one), "re-enabled assistance must still require each order to be touched");
@@ -319,10 +321,12 @@ public final class GestureInstrumentation extends Instrumentation {
             View bubble=awaitBubble(true);
             check(!uiArmed() && bubbleDescription().contains("辅助已关闭"), "target must show OFF bubble while disarmed");
             int before=fixtureResult()[0];
-            tapBubble(bubble); awaitArmed(true,"bubble should enable assist");
+            tapBubble(bubble); check(!uiArmed(), "single bubble tap must not enable");
+            SystemClock.sleep(55); tapBubble(bubble); check(!uiArmed(), "double bubble tap must not enable");
+            SystemClock.sleep(55); tapBubble(bubble); awaitArmed(true,"third bubble tap should enable assist");
             check(bubbleDescription().contains("辅助已开启"), "bubble must show ON after activation");
             SystemClock.sleep(300); check(fixtureResult()[0]==before, "enabling bubble must not dispatch a swipe");
-            bubble=awaitBubble(true); tapBubble(bubble); awaitArmed(false,"bubble should disable assist");
+            bubble=awaitBubble(true); tripleTapBubble(bubble); awaitArmed(false,"triple bubble tap should disable assist");
             check(bubbleDescription().contains("辅助已关闭"), "bubble must show OFF after disabling");
             check(fixtureResult()[0]==before, "bubble toggle must not dispatch a swipe");
             serviceCase("release",true);
@@ -354,6 +358,7 @@ public final class GestureInstrumentation extends Instrumentation {
         View view=awaitBubble(true); String[] value={""};
         runOnMainSync(() -> value[0]=String.valueOf(view.getContentDescription())); return value[0];
     }
+    private void tripleTapBubble(View view) throws Exception { for(int n=0;n<3;n++){tapBubble(view);SystemClock.sleep(55);} }
     private void tapBubble(View view) throws Exception {
         float[] center=new float[2]; runOnMainSync(() -> { int[] p=new int[2]; view.getLocationOnScreen(p); center[0]=p[0]+view.getWidth()/2f; center[1]=p[1]+view.getHeight()/2f; });
         long t=SystemClock.uptimeMillis(); sendGlobal(t,t,MotionEvent.ACTION_DOWN,center,false);
@@ -463,6 +468,8 @@ public final class GestureInstrumentation extends Instrumentation {
         fixture.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getTargetContext().startActivity(fixture);
         SystemClock.sleep(1200);
+        InteractionRecorder.clear(); InteractionRecorder.start();
+        serviceInvalidStarts();
         serviceCase("release", true, 0);
         serviceCase("release", true, 100);
         serviceCase("release", true, 150);
@@ -473,8 +480,37 @@ public final class GestureInstrumentation extends Instrumentation {
         serviceCase("immediate", false);
         serviceCase("gestures", false);
         runOnMainSync(AssistService::stopAssist);
-        result.putString("result", "PASS service: immediate quick up, immediate held, release held then up at 100/150/200/250/450/700ms, double tap; callback completed and fixture received DOWN/MOVE/UP");
+        InteractionRecorder.stop();
+        int completedTraces=0;
+        for(InteractionRecorder.TraceSnapshot trace:InteractionRecorder.snapshot().traces)
+            if("service_assist".equals(trace.kind) && "completed".equals(trace.outcome)) {
+                completedTraces++;
+                check(trace.stages.containsKey("dispatch") && trace.stages.containsKey("completed") && !trace.samples.isEmpty(),
+                        "service measurement must contain actual observed stages and finger sample");
+            }
+        check(completedTraces>=9 && ReportStats.of(InteractionRecorder.snapshot()).manualSuccessCount==0,
+                "real auxiliary timing must be collected separately from human speed");
+        InteractionRecorder.clear();
+        result.putString("result", "PASS service: orange start and drag-in rejected, exact initial DOWN X/Y and preserved grab offset, opt-in real stage tracing isolated from human stats; immediate quick up, immediate held, release held then up at 100/150/200/250/450/700ms, double tap; callback completed and fixture received DOWN/MOVE/UP");
         finish(Activity.RESULT_OK, result);
+    }
+    private void serviceInvalidStarts() throws Exception {
+        for(String mode:new String[]{"immediate","release","gestures"}) {
+            getTargetContext().getSharedPreferences("assist_settings",0).edit().putString("trigger_mode",mode).commit();
+            runOnMainSync(() -> check(AssistService.startAssist(),"cannot arm invalid-start test"));
+            View area=awaitArea(); float[] orange=new float[2],white=new float[2];
+            runOnMainSync(() -> {int[] p=new int[2];area.getLocationOnScreen(p);
+                SliderGeometry g=new SliderGeometry(area.getWidth(),area.getHeight(),area.getResources().getDisplayMetrics().density);
+                orange[0]=p[0]+area.getWidth()*.65f;orange[1]=p[1]+area.getHeight()/2f;
+                white[0]=p[0]+g.thumbLeft()+g.thumbWidth()/2f;white[1]=orange[1];});
+            int before=fixtureResult()[0]; sendHardware(orange,true); SystemClock.sleep(80);
+            android.util.DisplayMetrics m=getTargetContext().getResources().getDisplayMetrics();
+            runHardware("3 53 "+Math.round(white[0]*32767f/m.widthPixels));
+            runHardware("3 54 "+Math.round(white[1]*32767f/m.heightPixels));runHardware("0 0 0");
+            SystemClock.sleep(60);sendHardware(white,false);SystemClock.sleep(200);
+            check(armed() && fixtureResult()[0]==before,mode+" orange DOWN dragged into white must not trigger");
+            runOnMainSync(AssistService::stopAssist);
+        }
     }
     private void serviceCase(String mode, boolean hold) throws Exception { serviceCase(mode, hold, 0); }
     private void serviceCase(String mode, boolean hold, int selectedDuration) throws Exception {
@@ -497,7 +533,7 @@ public final class GestureInstrumentation extends Instrumentation {
         }
         int before=fixtureResult()[0];
         float[] c=new float[2];
-        runOnMainSync(() -> { int[] p=new int[2]; area.getLocationOnScreen(p); c[0]=p[0]+area.getWidth()/2f; c[1]=p[1]+area.getHeight()/2f; });
+        runOnMainSync(() -> { int[] p=new int[2]; area.getLocationOnScreen(p); SliderGeometry g=new SliderGeometry(area.getWidth(),area.getHeight(),area.getResources().getDisplayMetrics().density); c[0]=p[0]+g.thumbLeft()+g.thumbWidth()*.35f; c[1]=p[1]+g.thumbTop()+(g.thumbBottom()-g.thumbTop())*.4f; });
         long t=SystemClock.uptimeMillis();
         if (emulatorHardware) sendHardware(c, true); else sendGlobal(t,t,MotionEvent.ACTION_DOWN,c, false);
         if (hold) {
@@ -522,8 +558,29 @@ public final class GestureInstrumentation extends Instrumentation {
                 "fixture did not receive exactly one complete new rightward swipe; before=" + before + " after=" + java.util.Arrays.toString(result));
         int duration=fixtureDurationFor(result[0]); int expected=selectedDuration == 0 ? 250 : selectedDuration;
         check(Math.abs(duration-expected) <= 10, "fixture duration " + duration + "ms; expected " + expected + "ms");
+        float[] received = fixtureCoordinatesFor(result[0]);
+        check(Math.abs(received[0]-c[0])<3 && Math.abs(received[1]-c[1])<3,
+                "actual gesture must start at original DOWN, not handle center: " + java.util.Arrays.toString(received));
+        float[] travel = {0}; runOnMainSync(() -> travel[0]=new SliderGeometry(area.getWidth(),area.getHeight(),
+                area.getResources().getDisplayMetrics().density).travel());
+        check(Math.abs(received[2]-received[0]-travel[0])<3 && Math.abs(received[3]-received[1])<3,
+                "rightward gesture must preserve grab offset and original Y");
     }
 
+    private float[] fixtureCoordinatesFor(int count) throws Exception {
+        android.os.ParcelFileDescriptor fd=getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                .executeShellCommand("logcat -d -s SlideFixture:I");
+        java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();
+        try(java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)){
+            byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1)out.write(b,0,n);
+        }
+        String prefix="UP count="+count+" "; String last=null;
+        for(String line:out.toString("UTF-8").split("\n"))if(line.contains(prefix))last=line;
+        check(last!=null,"missing fixture coordinate result");
+        java.util.regex.Matcher m=java.util.regex.Pattern.compile("sx=([-0-9.]+) sy=([-0-9.]+) ex=([-0-9.]+) ey=([-0-9.]+)").matcher(last);
+        check(m.find(),"fixture did not expose real receiver coordinates");
+        return new float[]{Float.parseFloat(m.group(1)),Float.parseFloat(m.group(2)),Float.parseFloat(m.group(3)),Float.parseFloat(m.group(4))};
+    }
     private int fixtureDurationFor(int count) throws Exception {
         android.os.ParcelFileDescriptor fd=getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
                 .executeShellCommand("logcat -d -s SlideFixture:I");
@@ -637,8 +694,16 @@ public final class GestureInstrumentation extends Instrumentation {
     private void pause() { SystemClock.sleep(500); waitForIdleSync(); }
     private float[] center(DemoSliderView v) {
         float[] c = new float[2];
-        runOnMainSync(() -> { int[] p = new int[2]; v.getLocationOnScreen(p); c[0] = p[0] + v.getWidth()/2f; c[1] = p[1] + v.getHeight()/2f; });
+        runOnMainSync(() -> { int[] p = new int[2]; v.getLocationOnScreen(p); SliderGeometry g = new SliderGeometry(v.getWidth(), v.getHeight(), v.getResources().getDisplayMetrics().density); c[0] = p[0] + g.thumbLeft() + g.thumbWidth()/2f; c[1] = p[1] + (g.thumbTop()+g.thumbBottom())/2f; });
         return c;
+    }
+    private float[] outside(DemoSliderView v) {
+        float[] c = new float[2];
+        runOnMainSync(() -> { int[] p = new int[2]; v.getLocationOnScreen(p); c[0] = p[0] - 10; c[1] = p[1] + v.getHeight()/2f; });
+        return c;
+    }
+    private void tripleClick(View view) {
+        for (int i=0; i<3; i++) { runOnMainSync(view::performClick); SystemClock.sleep(65); }
     }
     private void send(long down, long when, int action, float[][] points) {
         int[] ids = new int[points.length]; for (int i = 0; i < ids.length; i++) ids[i] = i;
@@ -654,13 +719,17 @@ public final class GestureInstrumentation extends Instrumentation {
         MotionEvent event = MotionEvent.obtain(down, when, action, points.length, props, coords, 0, 0, 1, 1, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
         try { sendPointerSync(event); } finally { event.recycle(); }
     }
+    private void orangeTap(DemoSliderView v) {
+        float[] p=new float[2]; runOnMainSync(() -> {int[] q=new int[2];v.getLocationOnScreen(q);p[0]=q[0]+v.getWidth()*.65f;p[1]=q[1]+v.getHeight()/2f;});
+        long t=SystemClock.uptimeMillis();send(t,t,MotionEvent.ACTION_DOWN,new float[][]{p});send(t,t+40,MotionEvent.ACTION_UP,new float[][]{p});
+    }
     private void tap(DemoSliderView v) {
         float[] c = center(v); long t = SystemClock.uptimeMillis();
         send(t,t,MotionEvent.ACTION_DOWN,new float[][]{c}); SystemClock.sleep(50);
         send(t,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,new float[][]{c});
     }
     private void outsideTap(DemoSliderView v) {
-        float[] c = center(v); float[] p = { c[0] - v.getWidth() / 2f - 10, c[1] }; long t = SystemClock.uptimeMillis();
+        float[] c = center(v); float[] p = { outside(v)[0], c[1] }; long t = SystemClock.uptimeMillis();
         send(t,t,MotionEvent.ACTION_DOWN,new float[][]{p}); send(t,t+50,MotionEvent.ACTION_UP,new float[][]{p});
     }
     private void downHeld(DemoSliderView v) {
@@ -671,7 +740,7 @@ public final class GestureInstrumentation extends Instrumentation {
         send(t,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,new float[][]{c});
     }
     private void outsideDragIn(DemoSliderView v) {
-        float[] c = center(v), p = { c[0] - v.getWidth() / 2f - 10, c[1] }; long t = SystemClock.uptimeMillis();
+        float[] c = center(v), p = { outside(v)[0], c[1] }; long t = SystemClock.uptimeMillis();
         send(t,t,MotionEvent.ACTION_DOWN,new float[][]{p});
         send(t,t+80,MotionEvent.ACTION_MOVE,new float[][]{c});
         send(t,t+140,MotionEvent.ACTION_UP,new float[][]{c});
@@ -683,7 +752,7 @@ public final class GestureInstrumentation extends Instrumentation {
         send(t,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,new float[][]{c});
     }
     private void releaseOutside(DemoSliderView v) {
-        float[] c = center(v), p = { c[0] - v.getWidth() / 2f - 10, c[1] }; long t = SystemClock.uptimeMillis();
+        float[] c = center(v), p = { outside(v)[0], c[1] }; long t = SystemClock.uptimeMillis();
         send(t,t,MotionEvent.ACTION_DOWN,new float[][]{c});
         send(t,t+50,MotionEvent.ACTION_MOVE,new float[][]{p});
         send(t,t+90,MotionEvent.ACTION_UP,new float[][]{p});

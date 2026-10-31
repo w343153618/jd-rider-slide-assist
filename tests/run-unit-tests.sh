@@ -9,3 +9,6 @@ javac -d "$classes_dir" \
   "$project_dir/tests/VolumeKeyChordTest.java" "$project_dir/tests/SwipeTimingTest.java"
 java -cp "$classes_dir" com.example.slideassist.VolumeKeyChordTest
 java -cp "$classes_dir" com.example.slideassist.SwipeTimingTest
+sh "$project_dir/tests/run-slider-geometry-tests.sh"
+sh "$project_dir/tests/run-interaction-tests.sh"
+sh "$project_dir/tests/run-triple-tap-tests.sh"
