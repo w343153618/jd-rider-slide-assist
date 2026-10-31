@@ -23,9 +23,12 @@ public final class DemoSliderView extends View {
     private float previousTapX, previousTapY;
     private boolean moved, dragging, hadSecond, invalid, completed;
     private boolean immediate = true, release;
+    private boolean assistanceEnabled = true;
     private int releasePointer = -1;
     private ValueAnimator animator;
+    private int swipeDurationMillis = SwipeTiming.DEFAULT_MILLIS;
     private Runnable onComplete;
+    private Runnable onSlideStarted;
 
     public DemoSliderView(Context context) {
         super(context);
@@ -46,11 +49,25 @@ public final class DemoSliderView extends View {
 
     private void updateDescription() {
         setContentDescription(completed ? "模拟抢单成功，可点击重置练习再次尝试" :
+                !assistanceEnabled ? "练习辅助已关闭，可从左侧手动拖动滑条" :
                 immediate ? "模拟抢单滑条。单指按下立即模拟抢单" :
                 release ? "模拟抢单滑条。按下后抬起手指模拟抢单" : "模拟抢单滑条。双击或双指轻点，或从左侧向右滑动");
     }
 
     public void setOnComplete(Runnable callback) { onComplete = callback; }
+    public void setOnSlideStarted(Runnable callback) { onSlideStarted = callback; }
+
+    public void setSwipeDurationMillis(int duration) {
+        swipeDurationMillis = SwipeTiming.normalize(duration);
+    }
+
+    public void setAssistanceEnabled(boolean enabled) {
+        assistanceEnabled = enabled;
+        previousTapUp = 0;
+        releasePointer = -1;
+        invalid = true;
+        updateDescription();
+    }
 
     public void reset() {
         if (animator != null) animator.cancel();
@@ -88,7 +105,7 @@ public final class DemoSliderView extends View {
 
     @Override public boolean onTouchEvent(MotionEvent event) {
         if (completed || (animator != null && animator.isRunning())) return true;
-        if (release) {
+        if (assistanceEnabled && release) {
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
                 releasePointer = inside(event.getX(), event.getY()) ? event.getPointerId(0) : -1;
@@ -104,7 +121,7 @@ public final class DemoSliderView extends View {
         }
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                if (immediate) {
+                if (assistanceEnabled && immediate) {
                     if (inside(event.getX(), event.getY())) complete();
                     return true;
                 }
@@ -148,11 +165,11 @@ public final class DemoSliderView extends View {
                 checkPositions(event);
                 long duration = event.getEventTime() - downTime;
                 if (hadSecond) {
-                    if (!invalid && !moved && duration <= 500 && inside(event.getX(), event.getY())) complete();
+                    if (assistanceEnabled && !invalid && !moved && duration <= 500 && inside(event.getX(), event.getY())) complete();
                     else if (progress > 0) animateTo(0, false);
                 } else if (dragging) {
                     if (progress >= 0.85f) complete(); else animateTo(0, false);
-                } else if (!invalid && !moved && duration <= 350 && inside(event.getX(), event.getY())) {
+                } else if (assistanceEnabled && !invalid && !moved && duration <= 350 && inside(event.getX(), event.getY())) {
                     long sincePrevious = downTime - previousTapUp;
                     if (previousTapUp != 0 && sincePrevious >= 0 && sincePrevious <= ViewConfiguration.getDoubleTapTimeout()
                             && distance(downX - previousTapX, downY - previousTapY) <= 48 * density) {
@@ -184,11 +201,14 @@ public final class DemoSliderView extends View {
     }
     private boolean inside(float x, float y) { return x >= 0 && y >= 0 && x < getWidth() && y < getHeight(); }
     private float distance(float x, float y) { return (float) Math.hypot(x, y); }
-    private void complete() { animateTo(1, true); }
+    private void complete() {
+        if (onSlideStarted != null) onSlideStarted.run();
+        animateTo(1, true);
+    }
     private void animateTo(float end, boolean finish) {
         if (animator != null) animator.cancel();
         animator = ValueAnimator.ofFloat(progress, end);
-        animator.setDuration(280);
+        animator.setDuration(finish ? swipeDurationMillis : 280);
         animator.addUpdateListener(animation -> { progress = (float) animation.getAnimatedValue(); invalidate(); });
         animator.addListener(new android.animation.AnimatorListenerAdapter() {
             private boolean cancelled;
@@ -208,7 +228,7 @@ public final class DemoSliderView extends View {
 
     @Override public boolean performClick() {
         super.performClick();
-        if (!completed) complete();
+        if (!completed && assistanceEnabled) complete();
         return true;
     }
 }

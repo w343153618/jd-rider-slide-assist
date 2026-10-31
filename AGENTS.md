@@ -7,4 +7,5 @@ Use the addyosmani/agent-skills workflow as applicable: small implementation sli
 - Production debug/release must not allow runtime replacement of the target package. A separate test-only build can target an explicitly named, separately packaged fixture.
 - Synthetic demo data only. Do not commit original order screenshots, customer details, accounts, keys, APKs or device logs.
 - Build with `./gradlew assembleDebug assembleFixtureCheck assembleFixtureCheckAndroidTest lintDebug` and run the documented device tests. Keep actual source paths and credentials out of public documentation.
+- Run `tests/run-unit-tests.sh` for the volume-key state machine and supported timing values. Volume shortcuts only arm/disarm assistance; they must never dispatch a swipe themselves. Preserve the system key event stream and target/lock guards.
 - Report simulated controls, cross-app fixture results, and actual rider-app acceptance separately. Never equate `dispatchGesture.onCompleted` with successful order acceptance.

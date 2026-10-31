@@ -2,6 +2,7 @@ package com.example.slideassist;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -15,9 +16,11 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.View;
@@ -37,9 +40,17 @@ public class AssistService extends AccessibilityService {
     private static final String PREFS = "assist_settings";
     private static AssistService instance;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final VolumeKeyChord volumeKeyChord = new VolumeKeyChord();
+    private int chordStartTargetWindowId = -1;
     private WindowManager windows;
     private FrameLayout overlay;
     private View touchArea;
+    private StatusBubbleView statusBubble;
+    private WindowManager.LayoutParams bubbleLayout;
+    private int bubbleY = -1;
+    private boolean serviceStopping;
+    private boolean gestureInFlight;
+    private int gestureInFlightToken = -1;
     private WindowManager.LayoutParams layout;
     private final String target = TargetApp.PACKAGE_NAME;
     private volatile String lastGestureStatus = "idle";
@@ -61,22 +72,29 @@ public class AssistService extends AccessibilityService {
 
     private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) stopInternal(false);
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                volumeKeyChord.reset();
+                stopInternal(false);
+                removeStatusBubble();
+            }
         }
     };
 
     public static boolean isConnected() { return instance != null; }
 
+    static boolean isAssistArmed() { return instance != null && instance.armed; }
+
     /** Arms once, without acting until the fixed target is foreground and the user gestures. */
     public static boolean startAssist() {
         AssistService s = instance;
-        if (s == null) return false;
+        if (s == null || s.gestureInFlight || s.serviceStopping) return false;
         s.stopInternal(false);
         s.lastGestureStatus = "idle";
         s.lastGestureToken = -1;
         if (!TargetApp.getStatus(s).launchable) return false;
         s.armed = true;
         s.seenTarget = false;
+        s.updateStatusBubble();
         s.checkForeground();
         if (s.armed && !s.seenTarget) s.handler.postDelayed(s.armTimeout, 60000);
         return true;
@@ -97,16 +115,62 @@ public class AssistService extends AccessibilityService {
     @Override public void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+        volumeKeyChord.reset();
         windows = (WindowManager) getSystemService(WINDOW_SERVICE);
         IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(screenReceiver, filter);
+        handler.post(foregroundCheck);
+    }
+
+    /** Observe without consuming: Android and the foreground app retain the key stream. */
+    @Override protected boolean onKeyEvent(KeyEvent event) {
+        if (event == null) return false;
+        int action = event.getAction();
+        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP || event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                volumeKeyChord.onKey(event.getKeyCode(), false, event.getRepeatCount(), true,
+                        event.getEventTime(), event.getDeviceId());
+            }
+            return false;
+        }
+        boolean volume = event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP || event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_DOWN;
+        if (volume && action == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && volumeKeyChord.isIdle()) {
+            chordStartTargetWindowId = !armed && !injecting && isUnlockedAndInteractive() ? focusedTargetWindowId() : -1;
+        }
+        boolean chord = volumeKeyChord.onKey(event.getKeyCode(), action == KeyEvent.ACTION_DOWN,
+                event.getRepeatCount(), event.isCanceled(), event.getEventTime(), event.getDeviceId());
+        if (chord) toggleByVolumeChord();
+        return false;
+    }
+
+    private void toggleByVolumeChord() {
+        if (armed || injecting) {
+            boolean wasDispatched = gestureDispatched;
+            stopInternal(false);
+            toast(wasDispatched ? "辅助已关闭；已开始的滑动可能继续，请查看订单" : "辅助已关闭");
+            return;
+        }
+        if (!isUnlockedAndInteractive()) {
+            toast("手机已锁定，无法开启辅助");
+            return;
+        }
+        if (chordStartTargetWindowId < 0 || focusedTargetWindowId() != chordStartTargetWindowId) return;
+        if (startAssist()) toast("辅助已开启，请先对齐抢单滑条");
+        else toast("无法开启辅助，请检查目标应用和无障碍服务");
+    }
+
+    private boolean isUnlockedAndInteractive() {
+        KeyguardManager keyguard = (KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+        return keyguard != null && power != null && power.isInteractive() &&
+                !keyguard.isKeyguardLocked() && !keyguard.isDeviceLocked();
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (!armed || event == null) return;
+        if (event == null || serviceStopping) return;
         int type = event.getEventType();
-        if (type == AccessibilityEvent.TYPE_VIEW_SCROLLED && seenTarget && !gestureDispatched
+        if (armed && type == AccessibilityEvent.TYPE_VIEW_SCROLLED && seenTarget && !gestureDispatched
                 && event.getPackageName() != null && target.contentEquals(event.getPackageName())) {
             stopInternal(false);
             toast("页面已滚动，辅助已关闭，请重新对齐");
@@ -142,24 +206,35 @@ public class AssistService extends AccessibilityService {
 
 
     private boolean targetIsForeground() {
-        int id = focusedTargetWindowId();
+        int id = isUnlockedAndInteractive() ? focusedTargetWindowId() : -1;
         return id >= 0 && (!seenTarget || id == targetWindowId);
     }
 
     private void checkForeground() {
-        if (!armed) return;
-        int id = focusedTargetWindowId();
-        if (id >= 0 && (!seenTarget || id == targetWindowId)) {
-            if (!seenTarget) {
-                seenTarget = true;
-                targetWindowId = id;
-                handler.removeCallbacks(armTimeout);
+        if (serviceStopping) return;
+        int id = isUnlockedAndInteractive() ? focusedTargetWindowId() : -1;
+        if (id < 0) {
+            if (armed && seenTarget) {
+                stopInternal(false);
+                toast("目标页面已变化，辅助已关闭，请重新对齐");
             }
-            if (overlay == null && !injecting) showOverlay();
-        } else if (seenTarget) {
-            stopInternal(false);
-            toast("目标页面已变化，辅助已关闭，请重新对齐");
+            removeStatusBubble();
+            return;
         }
+        if (armed) {
+            if (seenTarget && id != targetWindowId) {
+                stopInternal(false);
+                toast("目标页面已变化，辅助已关闭，请重新对齐");
+            } else {
+                if (!seenTarget) {
+                    seenTarget = true;
+                    targetWindowId = id;
+                    handler.removeCallbacks(armTimeout);
+                }
+                if (overlay == null && !injecting) showOverlay();
+            }
+        }
+        updateStatusBubble();
     }
 
     private int dp(float value) { return (int) (getResources().getDisplayMetrics().density * value + .5f); }
@@ -176,6 +251,122 @@ public class AssistService extends AccessibilityService {
         DisplayMetrics m = new DisplayMetrics();
         windows.getDefaultDisplay().getRealMetrics(m);
         return new int[] {m.widthPixels, m.heightPixels};
+    }
+
+    /** Shows a compact state control only while the selected application is foreground. */
+    private void updateStatusBubble() {
+        if (windows == null) return;
+        if (serviceStopping || instance != this || injecting || gestureInFlight ||
+                !isUnlockedAndInteractive() || focusedTargetWindowId() < 0) {
+            removeStatusBubble();
+            return;
+        }
+        if (statusBubble == null) showStatusBubble();
+        if (statusBubble != null) {
+            statusBubble.setActive(armed);
+            avoidBubbleOverlap();
+        }
+    }
+
+    private void showStatusBubble() {
+        if (statusBubble != null || serviceStopping) return;
+        int[] screen = screenSize();
+        if (bubbleY < 0) bubbleY = screen[1] / 3;
+        bubbleY = clampBubbleY(bubbleY);
+        statusBubble = new StatusBubbleView(this);
+        statusBubble.setActive(armed);
+        bubbleLayout = new WindowManager.LayoutParams(dp(80), dp(48),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        bubbleLayout.gravity = Gravity.TOP | Gravity.RIGHT;
+        bubbleLayout.x = 0;
+        bubbleLayout.y = bubbleY;
+        statusBubble.setOnClickListener(v -> toggleByStatusBubble());
+        statusBubble.setOnTouchListener(new BubbleTouch());
+        try { windows.addView(statusBubble, bubbleLayout); }
+        catch (RuntimeException e) { statusBubble = null; bubbleLayout = null; }
+    }
+
+    private int clampBubbleY(int value) {
+        int screenHeight = screenSize()[1];
+        int top = Math.min(dp(30), Math.max(0, screenHeight - dp(48)));
+        int bottom = Math.max(top, screenHeight - dp(48) - dp(72));
+        return Math.max(top, Math.min(bottom, value));
+    }
+
+    private final class BubbleTouch implements View.OnTouchListener {
+        private float downX, downY;
+        private int originalY;
+        private boolean moved;
+        @Override public boolean onTouch(View view, MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = event.getRawX(); downY = event.getRawY();
+                    originalY = bubbleY; moved = false; return true;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    moved = true; return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = event.getRawX() - downX, dy = event.getRawY() - downY;
+                    int slop = ViewConfiguration.get(AssistService.this).getScaledTouchSlop();
+                    if (dx * dx + dy * dy > slop * slop) moved = true;
+                    if (moved && statusBubble != null && bubbleLayout != null) {
+                        bubbleY = clampBubbleY(originalY + Math.round(dy));
+                        bubbleLayout.y = bubbleY;
+                        try { windows.updateViewLayout(statusBubble, bubbleLayout); }
+                        catch (RuntimeException e) { removeStatusBubble(); }
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (moved) avoidBubbleOverlap(); else view.performClick();
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    return true;
+                default:
+                    return true;
+            }
+        }
+    }
+
+    private void toggleByStatusBubble() {
+        if (armed || injecting) {
+            boolean wasDispatched = gestureDispatched;
+            stopInternal(false);
+            toast(wasDispatched ? "辅助已关闭；已开始的滑动可能继续，请查看订单" : "辅助已关闭");
+        } else if (!isUnlockedAndInteractive() || focusedTargetWindowId() < 0) {
+            removeStatusBubble();
+        } else if (startAssist()) {
+            toast("辅助已开启，请先对齐抢单滑条");
+        } else {
+            toast("无法开启辅助，请检查目标应用和无障碍服务");
+        }
+    }
+
+    /** Keep the edge control out of the active touch strip when possible. */
+    private void avoidBubbleOverlap() {
+        if (statusBubble == null || bubbleLayout == null || overlay == null || layout == null) return;
+        int screenWidth = screenSize()[0];
+        int bubbleLeft = screenWidth - bubbleLayout.width;
+        int stripTop = layout.y + dp(38);
+        int stripBottom = stripTop + areaHeight;
+        if (layout.x + width <= bubbleLeft || bubbleY >= stripBottom || bubbleY + dp(48) <= stripTop) return;
+        int above = clampBubbleY(stripTop - dp(48));
+        int below = clampBubbleY(stripBottom);
+        int destination = above + dp(48) <= stripTop ? above : below;
+        if (destination == bubbleY) return;
+        bubbleY = destination;
+        bubbleLayout.y = bubbleY;
+        try { windows.updateViewLayout(statusBubble, bubbleLayout); }
+        catch (RuntimeException e) { removeStatusBubble(); }
+    }
+
+    private boolean removeStatusBubble() {
+        if (statusBubble == null) return true;
+        try { windows.removeViewImmediate(statusBubble); }
+        catch (RuntimeException e) { if (statusBubble.isAttachedToWindow()) return false; }
+        statusBubble = null;
+        bubbleLayout = null;
+        return true;
     }
 
     private void showOverlay() {
@@ -218,7 +409,10 @@ public class AssistService extends AccessibilityService {
         resize.setOnTouchListener(new TransformTouch(true));
         close.setOnClickListener(v -> { stopInternal(false); toast("辅助已关闭"); });
         touchArea.setOnTouchListener(new ActivationTouch());
-        try { windows.addView(overlay, layout); }
+        try {
+            windows.addView(overlay, layout);
+            avoidBubbleOverlap();
+        }
         catch (RuntimeException e) { overlay = null; touchArea = null; stopInternal(false); toast("无法显示辅助区域，请重新开启无障碍服务"); }
     }
 
@@ -246,7 +440,10 @@ public class AssistService extends AccessibilityService {
                     y = Math.max(0, Math.min(screen[1] - dp(68) - areaHeight, originalY + dy));
                     layout.x = x; layout.y = y;
                 }
-                try { windows.updateViewLayout(overlay, layout); } catch (RuntimeException ignored) { stopInternal(false); }
+                try {
+                    windows.updateViewLayout(overlay, layout);
+                    avoidBubbleOverlap();
+                } catch (RuntimeException ignored) { stopInternal(false); }
                 return true;
             }
             return true;
@@ -348,18 +545,21 @@ public class AssistService extends AccessibilityService {
             toast("请将辅助区域完整放在屏幕内并对齐滑条"); return;
         }
         View removedView = overlay;
+        View removedBubble = statusBubble;
         injecting = true;
         gestureDispatched = false;
-        if (!removeOverlay()) {
-            stopInternal(false); toast("无法移除辅助区域，未执行滑动"); return;
+        boolean areaRemoved = removeOverlay();
+        boolean bubbleRemoved = removeStatusBubble();
+        if (!areaRemoved || !bubbleRemoved) {
+            stopInternal(false); toast("无法移除辅助窗口，未执行滑动"); return;
         }
         // removeViewImmediate detaches the local view, but input dispatch may lag behind.
         // Await two display frames and verify detachment before injecting. Some Android
         // builds omit an app's own accessibility overlay from getWindows().
-        waitForOverlayRemoval(token, bounds, removedView, SystemClock.uptimeMillis() + 600, false);
+        waitForOverlayRemoval(token, bounds, removedView, removedBubble, SystemClock.uptimeMillis() + 600, false);
     }
 
-    private void waitForOverlayRemoval(int token, Rect bounds, View removedView, long deadline, boolean detachedOnPreviousFrame) {
+    private void waitForOverlayRemoval(int token, Rect bounds, View removedView, View removedBubble, long deadline, boolean detachedOnPreviousFrame) {
         Choreographer.getInstance().postFrameCallback(frameTime -> {
             if (!armed || token != generation) return;
             if (!targetIsForeground()) {
@@ -368,9 +568,9 @@ public class AssistService extends AccessibilityService {
             if (SystemClock.uptimeMillis() > deadline) {
                 stopInternal(false); toast("辅助窗口未及时关闭，未执行滑动"); return;
             }
-            boolean detached = !removedView.isAttachedToWindow();
+            boolean detached = !removedView.isAttachedToWindow() && (removedBubble == null || !removedBubble.isAttachedToWindow());
             if (!detached || !detachedOnPreviousFrame) {
-                waitForOverlayRemoval(token, bounds, removedView, deadline, detached);
+                waitForOverlayRemoval(token, bounds, removedView, removedBubble, deadline, detached);
                 return;
             }
             dispatchSwipe(token, bounds);
@@ -384,9 +584,12 @@ public class AssistService extends AccessibilityService {
         float inset = Math.min(bounds.height() / 2f, bounds.width() * .09f);
         float center = bounds.exactCenterY();
         Path path = new Path(); path.moveTo(bounds.left + inset, center); path.lineTo(bounds.right - inset, center);
-        GestureDescription g = new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path, 0, 250)).build();
+        GestureDescription g = new GestureDescription.Builder().addStroke(new GestureDescription.StrokeDescription(path, 0, SwipeTiming.normalize(
+                getSharedPreferences(PREFS, MODE_PRIVATE).getInt("swipe_duration_ms", 250)))).build();
         try {
             gestureDispatched = true;
+            gestureInFlight = true;
+            gestureInFlightToken = token;
             boolean accepted = dispatchGesture(g, new GestureResultCallback() {
                 @Override public void onCompleted(GestureDescription gesture) { finishSwipe(token, "completed"); }
                 @Override public void onCancelled(GestureDescription gesture) { finishSwipe(token, "cancelled"); }
@@ -399,7 +602,7 @@ public class AssistService extends AccessibilityService {
                         lastGestureStatus = "timeout";
                         lastGestureToken = -1;
                         stopInternal(false);
-                        toast("未收到手势结果，辅助已关闭，请查看订单状态");
+                        toast("未收到系统结果，请核对订单并重新开启无障碍服务");
                     }
                 }, 2000);
             } else finishSwipe(token, "rejected");
@@ -410,28 +613,33 @@ public class AssistService extends AccessibilityService {
 
     private void finishSwipe(int token, String status) {
         if (token == lastGestureToken) lastGestureStatus = status;
-        if (token != generation || !armed) return;
+        if (token == gestureInFlightToken) {
+            gestureInFlight = false;
+            gestureInFlightToken = -1;
+        }
+        if (token != generation || !armed) { updateStatusBubble(); return; }
         stopInternal(false); // One user gesture permits one injection; re-arm for each order.
         toast("completed".equals(status) ? "已执行滑动，请查看订单结果；辅助已关闭" : "滑动未完成，辅助已关闭，请重新对齐后重试");
     }
 
     private boolean removeOverlay() {
         if (overlay == null) return true;
-        boolean removed = true;
-        try { windows.removeViewImmediate(overlay); } catch (RuntimeException e) { removed = false; }
+        try { windows.removeViewImmediate(overlay); }
+        catch (RuntimeException e) { if (overlay.isAttachedToWindow()) return false; }
         overlay = null; touchArea = null; layout = null;
-        return removed;
+        return true;
     }
 
     private void stopInternal(boolean notify) {
         generation++; armed = false; seenTarget = false; injecting = false; gestureDispatched = false; geometryInitialized = false; targetWindowId = -1;
         handler.removeCallbacks(foregroundCheck); handler.removeCallbacks(armTimeout); removeOverlay();
+        updateStatusBubble();
         if (notify) toast("辅助已关闭");
     }
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_SHORT).show(); }
-    @Override public void onInterrupt() { stopInternal(false); }
-    @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); stopInternal(false); toast("屏幕状态变化，辅助已关闭"); }
+    @Override public void onInterrupt() { volumeKeyChord.reset(); stopInternal(false); removeStatusBubble(); }
+    @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); volumeKeyChord.reset(); bubbleY = -1; stopInternal(false); removeStatusBubble(); handler.post(foregroundCheck); toast("屏幕状态变化，辅助已关闭"); }
     @Override public void onDestroy() {
-        stopInternal(false); unregisterReceiver(screenReceiver); if (instance == this) instance = null; super.onDestroy();
+        serviceStopping = true; volumeKeyChord.reset(); stopInternal(false); removeStatusBubble(); unregisterReceiver(screenReceiver); if (instance == this) instance = null; super.onDestroy();
     }
 }

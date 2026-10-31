@@ -1,3 +1,3 @@
 <resources>
-    <string name="accessibility_description">仅在您主动触发时辅助执行滑动。请仅在需要使用时开启。</string>
+    <string name="accessibility_description">由您手动触发一次滑动。可在骑士页面同时短按音量加减键开关辅助；服务需接收按键及前台窗口信息。正常音量仍由系统处理。请按需开启。</string>
 </resources>

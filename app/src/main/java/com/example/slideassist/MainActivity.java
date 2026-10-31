@@ -8,8 +8,12 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -26,6 +30,10 @@ public final class MainActivity extends Activity {
     private static final int ORANGE = Color.rgb(211, 89, 0);
     private TextView connection, target, demoHint, gestureStatus;
     private final List<DemoSliderView> sliders = new ArrayList<>();
+    private StatusBubbleView demoBubble;
+    private boolean demoAssistEnabled = true;
+    private final VolumeKeyChord demoKeys = new VolumeKeyChord();
+    private UpdateManager updater;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -48,7 +56,10 @@ public final class MainActivity extends Activity {
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(16), dp(22), dp(16), dp(28));
         scroll.addView(page);
-        setContentView(scroll);
+        FrameLayout content = new FrameLayout(this);
+        content.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        setContentView(content);
+        updater = new UpdateManager(this);
 
         TextView eyebrow = text("手动决定 · 辅助滑动", 13, ORANGE, true);
         page.addView(eyebrow);
@@ -57,6 +68,12 @@ public final class MainActivity extends Activity {
         TextView intro = text("京东秒送骑士专用 · 请先在模拟订单中练习", 15, MUTED, false);
         intro.setLineSpacing(dp(3), 1f);
         addTop(page, intro, 7);
+        LinearLayout versionRow = row();
+        versionRow.addView(text("版本 " + BuildConfig.VERSION_NAME, 13, MUTED, false), new LinearLayout.LayoutParams(0, -2, 1));
+        Button upgrade = button("检查更新 / 升级", false);
+        upgrade.setOnClickListener(v -> updater.checkForUpdate());
+        versionRow.addView(upgrade, new LinearLayout.LayoutParams(dp(142), dp(48)));
+        addTop(page, versionRow, 10);
 
         LinearLayout setup = card();
         addTop(page, setup, 20);
@@ -115,7 +132,40 @@ public final class MainActivity extends Activity {
             for (DemoSliderView slider : sliders) slider.setTriggerMode(mode);
             updateDemoHint(mode);
             message("触发方式已更改，辅助已停止；请重新启动并对齐");
+            refreshStatus();
         });
+        addTop(setupDetails, text("滑动时长", 15, INK, true), 14);
+        RadioGroup durations = new RadioGroup(this);
+        durations.setOrientation(RadioGroup.VERTICAL);
+        int savedDuration = SwipeTiming.normalize(getSharedPreferences("assist_settings", MODE_PRIVATE)
+                .getInt("swipe_duration_ms", SwipeTiming.DEFAULT_MILLIS));
+        for (int duration : new int[] {250, 450, 700}) {
+            RadioButton option = new RadioButton(this);
+            option.setId(View.generateViewId());
+            option.setTag(duration);
+            option.setText(duration + " 毫秒" + (duration == 250 ? " · 快速（默认）"
+                    : duration == 450 ? " · 适中" : " · 较慢"));
+            option.setTextColor(INK);
+            option.setMinHeight(dp(48));
+            durations.addView(option);
+            if (duration == savedDuration) durations.check(option.getId());
+        }
+        addTop(setupDetails, durations, 3);
+        durations.setOnCheckedChangeListener((group, id) -> {
+            View checked = group.findViewById(id);
+            if (checked == null) return;
+            int duration = (Integer) checked.getTag();
+            getSharedPreferences("assist_settings", MODE_PRIVATE).edit().putInt("swipe_duration_ms", duration).apply();
+            AssistService.stopAssist();
+            for (DemoSliderView slider : sliders) slider.setSwipeDurationMillis(duration);
+            message("滑动时长已设为 " + duration + " 毫秒；请重新启动并对齐辅助区");
+            refreshStatus();
+        });
+        addTop(setupDetails, text("时长控制拖动过程，不增加触发前的等待。模拟订单也采用所选时长。", 14, MUTED, false), 4);
+        addTop(setupDetails, text("音量键快捷开关", 15, INK, true), 14);
+        TextView shortcut = text("先开启无障碍服务。在骑士页面，同时短按音量＋和音量－，开启或关闭辅助。也可点按贴边状态球切换，或上下拖动状态球。开启后仍需对齐滑条并亲自触发；每次滑动结束会自动关闭。两键全部松开后才能再次切换。\n正常音量可能变化；请勿长按，以免触发系统快捷方式。若手机无法接收组合键，可使用状态球或下方按钮。", 14, MUTED, false);
+        shortcut.setLineSpacing(dp(2), 1f);
+        addTop(setupDetails, shortcut, 6);
         TextView setupHint = text("开启无障碍服务后，启动辅助会打开京东秒送骑士。将浮层移动、调整至完整对齐所选订单的抢单条，浮层会遮挡其下触摸。按下模式一接触就执行；抬起模式在最初的手指抬起时执行。滚动列表请从区域外起手。每次触发、离开应用或滚动列表后辅助会关闭，需重新启动和对齐。", 14, MUTED, false);
         setupHint.setLineSpacing(dp(2), 1f);
         addTop(setupDetails, setupHint, 10);
@@ -161,6 +211,29 @@ public final class MainActivity extends Activity {
                 {"示例水果店 · 中心店", "取货后送至：云景苑 12 号楼一单元", "约 2.2 公里 · 2 件", "若电话未接通，请放在门卫处"}
         };
         for (int i = 0; i < orders.length; i++) addOrder(page, orders[i], i + 1);
+        demoBubble = new StatusBubbleView(this);
+        FrameLayout.LayoutParams bubblePosition = new FrameLayout.LayoutParams(dp(84), dp(48), Gravity.END | Gravity.TOP);
+        bubblePosition.topMargin = dp(160);
+        content.addView(demoBubble, bubblePosition);
+        demoBubble.setActive(demoAssistEnabled);
+        demoBubble.setOnClickListener(v -> setDemoAssistEnabled(!demoAssistEnabled));
+        demoBubble.setOnTouchListener(new View.OnTouchListener() {
+            float startY, initialY;
+            boolean dragged;
+            @Override public boolean onTouch(View view, MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    startY = event.getRawY(); initialY = view.getY(); dragged = false; return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                    float delta = event.getRawY() - startY;
+                    if (Math.abs(delta) > ViewConfiguration.get(MainActivity.this).getScaledTouchSlop()) dragged = true;
+                    if (dragged) view.setY(Math.max(dp(48), Math.min(content.getHeight() - dp(80), initialY + delta)));
+                    return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP && !dragged) view.performClick();
+                return true;
+            }
+        });
         refreshStatus();
     }
 
@@ -186,6 +259,8 @@ public final class MainActivity extends Activity {
         }
         DemoSliderView slider = new DemoSliderView(this);
         slider.setTriggerMode(getSharedPreferences("assist_settings", MODE_PRIVATE).getString("trigger_mode", "immediate"));
+        slider.setSwipeDurationMillis(getSharedPreferences("assist_settings", MODE_PRIVATE)
+                .getInt("swipe_duration_ms", SwipeTiming.DEFAULT_MILLIS));
         sliders.add(slider);
         LinearLayout.LayoutParams sliderParams = new LinearLayout.LayoutParams(-1, dp(62));
         sliderParams.topMargin = dp(15);
@@ -193,9 +268,11 @@ public final class MainActivity extends Activity {
         Button reset = button("重置本条练习", false);
         reset.setVisibility(View.GONE);
         addTop(card, reset, 8);
+        slider.setOnSlideStarted(() -> setDemoAssistEnabled(false));
         slider.setOnComplete(() -> {
             state.setText("模拟成功"); state.setTextColor(Color.rgb(41, 118, 75));
             reset.setVisibility(View.VISIBLE);
+            setDemoAssistEnabled(false);
         });
         reset.setOnClickListener(v -> {
             slider.reset(); state.setText("待选择"); state.setTextColor(MUTED);
@@ -205,18 +282,49 @@ public final class MainActivity extends Activity {
 
     private void updateDemoHint(String mode) {
         if (demoHint == null) return;
-        demoHint.setText("gestures".equals(mode)
+        if (!demoAssistEnabled) {
+            demoHint.setText("练习辅助已关闭。点击贴边状态球或同时短按音量加减键开启；关闭时仍可从左侧手动拖动。状态球仅控制本页练习，不操作真实订单。");
+            return;
+        }
+        String instruction = "gestures".equals(mode)
                 ? "以下均为虚构订单，不会产生真实接单。在橙色区域单指双击、双指轻点，或从左侧向右滑动。"
                 : "release".equals(mode)
                 ? "以下均为虚构订单，不会产生真实接单。在橙色区域按下，最初的手指抬起时即模拟抢单；滚动列表请从橙色区域外起手。"
-                : "以下均为虚构订单，不会产生真实接单。手指一按下橙色区域就会模拟抢单；滚动列表请从橙色区域外起手。");
+                : "以下均为虚构订单，不会产生真实接单。手指一按下橙色区域就会模拟抢单；滚动列表请从橙色区域外起手。";
+        demoHint.setText("练习辅助已开启。点按贴边状态球可关闭，按住可上下移动。每次完成后自动关闭。\n" + instruction);
     }
 
-    @Override protected void onResume() { super.onResume(); refreshStatus(); }
+    void setDemoAssistEnabled(boolean enabled) {
+        demoAssistEnabled = enabled;
+        for (DemoSliderView slider : sliders) slider.setAssistanceEnabled(enabled);
+        if (demoBubble != null) demoBubble.setActive(enabled);
+        updateDemoHint(getSharedPreferences("assist_settings", MODE_PRIVATE).getString("trigger_mode", "immediate"));
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN || event.getAction() == KeyEvent.ACTION_UP) {
+            if (demoKeys.onKey(event.getKeyCode(), event.getAction() == KeyEvent.ACTION_DOWN,
+                    event.getRepeatCount(), event.isCanceled(), event.getEventTime(), event.getDeviceId())) {
+                setDemoAssistEnabled(!demoAssistEnabled);
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        AssistService.stopAssist();
+        refreshStatus();
+        if (updater != null) updater.resumePendingInstall();
+    }
+    @Override protected void onPause() { demoKeys.reset(); super.onPause(); }
+    @Override protected void onDestroy() { if (updater != null) updater.destroy(); super.onDestroy(); }
 
     private void refreshStatus() {
         if (connection == null || target == null) return;
-        connection.setText(AssistService.isConnected() ? "无障碍服务：已开启" : "无障碍服务：未开启");
+        connection.setText(AssistService.isConnected()
+                ? "无障碍服务：已开启 · 辅助" + (AssistService.isAssistArmed() ? "已激活" : "已关闭")
+                : "无障碍服务：未开启（快捷键暂不可用）");
         String last = AssistService.getLastGestureStatus();
         String result;
         switch (last) {

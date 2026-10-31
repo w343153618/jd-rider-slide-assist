@@ -7,6 +7,7 @@ import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -19,16 +20,23 @@ import java.util.List;
 public final class GestureInstrumentation extends Instrumentation {
     private final List<DemoSliderView> sliders = new ArrayList<>();
     private ScrollView scroll;
-    private RadioButton gestureMode, releaseMode;
-    private boolean serviceTest, emulatorHardware;
+    private RadioButton gestureMode, releaseMode, immediateMode, slowDuration;
+    private android.widget.Button expandSettings;
+    private View demoBubble;
+    private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest;
+    private String pendingTest;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (pendingTest != null) { testPending(result); return; }
+            if (updateTest) { testUpdate(result); return; }
+            if (volumeTest) { testVolume(result); return; }
+            if (bubbleTest) { testBubble(result); return; }
             if (serviceTest) { testService(result); return; }
-            getTargetContext().getSharedPreferences("assist_settings", 0).edit().remove("trigger_mode").commit();
+            getTargetContext().getSharedPreferences("assist_settings", 0).edit().remove("trigger_mode").remove("swipe_duration_ms").commit();
             Intent intent = new Intent(getTargetContext(), MainActivity.class);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             Activity activity = startActivitySync(intent);
@@ -42,6 +50,10 @@ public final class GestureInstrumentation extends Instrumentation {
             select(one); outsideTap(one); pause(); check(!done(one), "touch outside slider must not complete");
             select(one); outsideDragIn(one); pause(); check(!done(one), "outside start dragged into slider must not complete");
             select(one); downHeld(one); check(done(one), "default mode must complete on down before release");
+            check(demoBubble != null && String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭"), "demo bubble should turn off after success");
+            runOnMainSync(one::reset); select(one); tap(one); pause(); check(!done(one), "OFF demo bubble must prevent assisted tap");
+            runOnMainSync(() -> demoBubble.performClick());
+            check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已开启"), "demo bubble should turn on when clicked");
             reset(one);
             runOnMainSync(() -> { if (releaseMode == null) throw new AssertionError("release mode option missing"); releaseMode.performClick(); });
             waitForIdleSync();
@@ -60,7 +72,32 @@ public final class GestureInstrumentation extends Instrumentation {
             reset(one); select(one); threeFingerTap(one); pause(); check(!done(one), "three-finger tap must not complete");
             select(two); doubleTap(two); pause(); check(done(two), "second order double tap");
             check(!done(one), "second order completion must not complete first");
-            result.putString("result", "PASS: immediate on down while held, outside touch and drag, release on up not down, release outside, first finger release, gesture mode single tap, double tap, two-finger tap, movement, three-finger tap, independent orders");
+            reset(two); reset(one); select(one);
+            runOnMainSync(() -> {
+                check(expandSettings != null && immediateMode != null && slowDuration != null, "settings controls missing");
+                expandSettings.performClick(); immediateMode.performClick(); slowDuration.performClick();
+            });
+            check(getTargetContext().getSharedPreferences("assist_settings",0).getInt("swipe_duration_ms",0)==700,
+                    "duration setting must persist in preferences");
+            select(one); float[] durationPoint=center(one); long durationDown=SystemClock.uptimeMillis();
+            send(durationDown,durationDown,MotionEvent.ACTION_DOWN,new float[][]{durationPoint});
+            check(String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭"), "first slide must close assist immediately");
+            runOnMainSync(() -> {
+                long now=SystemClock.uptimeMillis(); float x=two.getWidth()/2f, y=two.getHeight()/2f;
+                MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,x,y,0);
+                MotionEvent up=MotionEvent.obtain(now,now+40,MotionEvent.ACTION_UP,x,y,0);
+                try { two.dispatchTouchEvent(down); two.dispatchTouchEvent(up); } finally { down.recycle(); up.recycle(); }
+            });
+            SystemClock.sleep(350); check(!done(one), "700ms demo should still animate after 350ms");
+            SystemClock.sleep(500); waitForIdleSync(); check(done(one), "700ms demo must complete after animation");
+            check(!done(two), "touching another order while first animates must not start another assisted swipe");
+            send(durationDown,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,new float[][]{durationPoint});
+            runOnMainSync(activity::finish); waitForIdleSync();
+            sliders.clear(); scroll=null; slowDuration=null;
+            Activity reopened=startActivitySync(intent); waitForIdleSync();
+            runOnMainSync(() -> findViews(reopened.getWindow().getDecorView()));
+            check(slowDuration != null && slowDuration.isChecked(), "700ms choice must remain selected after reopening");
+            result.putString("result", "PASS: immediate on down while held, outside touch and drag, release on up not down, release outside, first finger release, gesture mode single tap, double tap, two-finger tap, movement, three-finger tap, independent orders, demo bubble auto-OFF and tap to enable, second-order race prevented, 700ms demo timing and selection after reopening");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable e) {
             result.putString("result", "FAIL: " + e);
@@ -68,6 +105,247 @@ public final class GestureInstrumentation extends Instrumentation {
             finish(Activity.RESULT_CANCELED, result);
         }
     }
+
+    private interface ThrowingAction { void run() throws Exception; }
+    private void rejects(ThrowingAction action, String message) throws Exception {
+        boolean rejected=false; try { action.run(); } catch (Exception expected) { rejected=true; }
+        check(rejected,message);
+    }
+    private void testUpdate(Bundle result) throws Exception {
+        check(UpdateManager.compare(UpdateManager.parseVersion("v1.2.0"),UpdateManager.parseVersion("1.1.9")) > 0, "version order");
+        check(UpdateManager.compare(UpdateManager.parseVersion("1.2.0"),UpdateManager.parseVersion("v1.2.0")) == 0, "tag equivalence");
+        rejects(() -> UpdateManager.parseVersion("v1.2.0-rc1"),"prerelease version must be rejected");
+        rejects(() -> UpdateManager.parseVersion("v1.2"),"incomplete version must be rejected");
+        rejects(() -> UpdateManager.requireHost(new java.net.URL("http://github.com/example")),"http host must be rejected");
+        rejects(() -> UpdateManager.requireHost(new java.net.URL("https://github.com.example.invalid/")),"host suffix spoof must be rejected");
+        rejects(() -> UpdateManager.requireHost(new java.net.URL("https://github.com@evil.invalid/")),"URL user info must be rejected");
+        rejects(() -> UpdateManager.requireHost(new java.net.URL("https://github.com:444/")),"unexpected port must be rejected");
+        UpdateManager.requireHost(new java.net.URL("https://github.com/"));
+        String asset="https://github.com/w343153618/jd-rider-slide-assist/releases/download/v1.2.0/jd-rider-slide-assist.apk";
+        UpdateManager.requireAssetUrl(asset,"v1.2.0","jd-rider-slide-assist.apk");
+        rejects(() -> UpdateManager.requireAssetUrl(asset.replace("v1.2.0","v1.2.1"),"v1.2.0","jd-rider-slide-assist.apk"),"mismatched release tag must be rejected");
+        java.lang.reflect.Field hashField=UpdateManager.class.getDeclaredField("SHA_PATTERN"); hashField.setAccessible(true);
+        java.util.regex.Pattern hashPattern=(java.util.regex.Pattern)hashField.get(null);
+        String digest="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        check(hashPattern.matcher(digest).matches(),"plain checksum accepted");
+        check(hashPattern.matcher(digest+"  jd-rider-slide-assist.apk\n").matches(),"named checksum accepted");
+        check(!hashPattern.matcher(digest+"  other.apk").matches(),"wrong checksum filename rejected");
+        android.content.Context c=getTargetContext();
+        java.io.File file=UpdateApkProvider.updateFile(c,digest); java.io.File parent=file.getParentFile();
+        check(parent.isDirectory() || parent.mkdirs(),"cannot create test update directory");
+        check(file.createNewFile(),"test digest file already exists; refusing to overwrite");
+        try {
+            try (java.io.FileOutputStream out=new java.io.FileOutputStream(file)) { out.write(new byte[]{1,2,3}); }
+            android.net.Uri uri=UpdateApkProvider.updateUri(c,digest);
+            try (android.os.ParcelFileDescriptor pfd=c.getContentResolver().openFileDescriptor(uri,"r")) { check(pfd != null,"provider read should succeed"); }
+            rejects(() -> c.getContentResolver().openFileDescriptor(uri,"w"),"provider must reject writes");
+            android.net.Uri invalid=uri.buildUpon().appendQueryParameter("x","1").build();
+            rejects(() -> c.getContentResolver().openFileDescriptor(invalid,"r"),"provider must reject unexpected query");
+            rejects(() -> UpdateApkProvider.updateFile(c,"../invalid"),"invalid digest rejected");
+        } finally { check(file.delete(),"test digest cleanup failed"); }
+        java.lang.reflect.Method archive=UpdateManager.class.getDeclaredMethod("verifyArchive",android.content.Context.class,java.io.File.class,String.class);
+        archive.setAccessible(true);
+        String ownVersion=c.getPackageManager().getPackageInfo(c.getPackageName(),0).versionName;
+        java.io.File ownApk=new java.io.File(c.getApplicationInfo().sourceDir);
+        rejects(() -> archive.invoke(null,c,ownApk,ownVersion),"same version must be rejected");
+        java.io.File foreignApk=new java.io.File(c.getPackageManager().getApplicationInfo(BuildConfig.TARGET_PACKAGE,0).sourceDir);
+        rejects(() -> archive.invoke(null,c,foreignApk,ownVersion),"different application ID must be rejected");
+        java.io.File wrongSigner=java.io.File.createTempFile("wrong-signer-", ".apk", c.getCacheDir());
+        try {
+            android.os.ParcelFileDescriptor fd=getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                    .executeShellCommand("cat /data/local/tmp/slide-wrong-signer.apk");
+            try (java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd);
+                 java.io.OutputStream out=new java.io.FileOutputStream(wrongSigner)) {
+                byte[] buf=new byte[1024]; int n; while ((n=in.read(buf))!=-1) out.write(buf,0,n);
+            }
+            check(wrongSigner.length()>0,"prepare wrong-signer fixture APK first");
+            try {
+                archive.invoke(null,c,wrongSigner,"9.9.9");
+                throw new AssertionError("wrong signing key must be rejected");
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                check(String.valueOf(e.getCause().getMessage()).contains("签名"), "wrong signer must fail specifically on signature: "+e.getCause());
+            }
+        } finally { check(wrongSigner.delete(),"wrong signer test cleanup"); }
+        result.putString("result","PASS updater: versions, hosts, asset URL, checksum format, provider read-only/URI, same-version, foreign-package and wrong-signer rejection");
+        finish(Activity.RESULT_OK,result);
+    }
+
+    private void testPending(Bundle result) throws Exception {
+        android.content.Context c=getTargetContext();
+        boolean allowed="allowed".equals(pendingTest);
+        check(allowed || "denied".equals(pendingTest), "invalid pending test mode");
+        check(c.getPackageManager().canRequestPackageInstalls()==allowed, "set test app install permission before starting instrumentation");
+        String digest="fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+        java.io.File file=UpdateApkProvider.updateFile(c,digest);
+        check(file.getParentFile().isDirectory() || file.getParentFile().mkdirs(),"cannot create pending update directory");
+        check(file.createNewFile(),"pending-test file already exists");
+        try {
+            try (java.io.FileOutputStream out=new java.io.FileOutputStream(file)) { out.write(new byte[]{1,2,3}); }
+            android.content.SharedPreferences pending=c.getSharedPreferences("pending_update",0);
+            pending.edit().putBoolean("waiting",true).putString("digest",digest).putString("tag","v9.9.9").commit();
+            Activity activity=startUpdateActivity();
+            waitForDialog(allowed ? "安装包校验失败" : "尚未允许安装");
+            check(!pending.getBoolean("waiting",false),"resume should consume pending state without installing");
+            getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                    .performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
+            runOnMainSync(activity::finish); waitForIdleSync();
+            result.putString("result","PASS pending update recreation, install permission " + pendingTest + "; no installation launched");
+        } finally {
+            c.getSharedPreferences("pending_update",0).edit().clear().commit();
+            check(file.delete(),"pending test cleanup failed");
+        }
+        finish(Activity.RESULT_OK,result);
+    }
+    private Activity startUpdateActivity() {
+        Intent intent=new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        Activity activity=startActivitySync(intent); waitForIdleSync(); return activity;
+    }
+    private void waitForDialog(String text) {
+        for (int i=0; i<80; i++) {
+            android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).getRootInActiveWindow();
+            if (root!=null) {
+                try {
+                    if (getTargetContext().getPackageName().contentEquals(root.getPackageName()) && !root.findAccessibilityNodeInfosByText(text).isEmpty()) return;
+                } finally { root.recycle(); }
+            }
+            SystemClock.sleep(50);
+        }
+        throw new AssertionError("expected own-app dialog not found: " + text);
+    }
+
+    private void testBubble(Bundle result) throws Exception {
+        check(emulatorHardware && "ranchu".equals(android.os.Build.HARDWARE) && android.os.Build.PRODUCT.startsWith("sdk_gphone"),
+                "bubble integration test requires an isolated emulator");
+        check("com.example.slideassist.fixture".equals(BuildConfig.TARGET_PACKAGE), "bubble test requires fixture build");
+        for (int i=0; i<600 && !AssistService.isConnected(); i++) SystemClock.sleep(50);
+        check(AssistService.isConnected(), "accessibility service not connected");
+        boolean screenOff=false;
+        try {
+            runOnMainSync(AssistService::stopAssist);
+            Intent fixture=getTargetContext().getPackageManager().getLaunchIntentForPackage(BuildConfig.TARGET_PACKAGE);
+            check(fixture != null, "fixture not installed"); fixture.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getTargetContext().startActivity(fixture); SystemClock.sleep(1000);
+            getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
+            View bubble=awaitBubble(true);
+            check(!uiArmed() && bubbleDescription().contains("辅助已关闭"), "target must show OFF bubble while disarmed");
+            int before=fixtureResult()[0];
+            tapBubble(bubble); awaitArmed(true,"bubble should enable assist");
+            check(bubbleDescription().contains("辅助已开启"), "bubble must show ON after activation");
+            SystemClock.sleep(300); check(fixtureResult()[0]==before, "enabling bubble must not dispatch a swipe");
+            bubble=awaitBubble(true); tapBubble(bubble); awaitArmed(false,"bubble should disable assist");
+            check(bubbleDescription().contains("辅助已关闭"), "bubble must show OFF after disabling");
+            check(fixtureResult()[0]==before, "bubble toggle must not dispatch a swipe");
+            serviceCase("release",true);
+            awaitBubble(true); check(!uiArmed() && bubbleDescription().contains("辅助已关闭"), "after one swipe bubble must return OFF");
+            Intent other=new Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getTargetContext().startActivity(other); awaitBubble(false);
+            getTargetContext().startActivity(fixture); awaitBubble(true);
+            shellCommand("input keyevent KEYCODE_SLEEP"); screenOff=true;
+            awaitBubble(false);
+            result.putString("result", "PASS bubble: OFF/ON, taps never swipe, OFF after gesture, hidden outside target and on screen off");
+        } finally {
+            if (screenOff) { shellCommand("input keyevent KEYCODE_WAKEUP"); shellCommand("wm dismiss-keyguard"); }
+            runOnMainSync(AssistService::stopAssist);
+        }
+        finish(Activity.RESULT_OK,result);
+    }
+    private View awaitBubble(boolean present) throws Exception {
+        for (int i=0; i<80; i++) {
+            View view=(View) serviceField("statusBubble");
+            boolean[] attached={false};
+            if (view!=null) runOnMainSync(() -> attached[0]=view.isAttachedToWindow());
+            if (present && view!=null && attached[0]) return view;
+            if (!present && (view==null || !attached[0])) return null;
+            SystemClock.sleep(50);
+        }
+        throw new AssertionError("status bubble not " + (present ? "visible" : "hidden"));
+    }
+    private String bubbleDescription() throws Exception {
+        View view=awaitBubble(true); String[] value={""};
+        runOnMainSync(() -> value[0]=String.valueOf(view.getContentDescription())); return value[0];
+    }
+    private void tapBubble(View view) throws Exception {
+        float[] center=new float[2]; runOnMainSync(() -> { int[] p=new int[2]; view.getLocationOnScreen(p); center[0]=p[0]+view.getWidth()/2f; center[1]=p[1]+view.getHeight()/2f; });
+        long t=SystemClock.uptimeMillis(); sendGlobal(t,t,MotionEvent.ACTION_DOWN,center,false);
+        sendGlobal(t,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,center,false);
+    }
+    private void shellCommand(String command) throws Exception {
+        android.os.ParcelFileDescriptor fd=getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).executeShellCommand(command);
+        try (java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)) { while (in.read()!=-1) {} }
+    }
+
+    private void testVolume(Bundle result) throws Exception {
+        check("com.example.slideassist.fixture".equals(BuildConfig.TARGET_PACKAGE), "volume test requires fixture build");
+        for (int i=0; i<600 && !AssistService.isConnected(); i++) SystemClock.sleep(50);
+        check(AssistService.isConnected(), "accessibility service is not connected");
+        android.media.AudioManager audio=(android.media.AudioManager) getTargetContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+        int[] streams={android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.STREAM_RING,
+                android.media.AudioManager.STREAM_SYSTEM, android.media.AudioManager.STREAM_NOTIFICATION,
+                android.media.AudioManager.STREAM_ALARM, android.media.AudioManager.STREAM_VOICE_CALL};
+        int[] levels=new int[streams.length];
+        for (int i=0; i<streams.length; i++) levels[i]=audio.getStreamVolume(streams[i]);
+        try {
+            runOnMainSync(AssistService::stopAssist);
+            Intent fixture=getTargetContext().getPackageManager().getLaunchIntentForPackage(BuildConfig.TARGET_PACKAGE);
+            check(fixture != null, "install isolated fixture first");
+            fixture.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getTargetContext().startActivity(fixture);
+            SystemClock.sleep(900);
+            getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
+            int before=fixtureResult()[0];
+            check(!uiArmed(), "initially disarmed");
+
+            runKeyFixture("single");
+            SystemClock.sleep(150); check(!uiArmed(), "single volume key must not arm");
+            runKeyFixture("slow");
+            SystemClock.sleep(150); check(!uiArmed(), "keys separated by more than 200ms must not arm");
+
+            java.io.BufferedReader held=startKeyFixture("hold");
+            awaitArmed(true, "physical-source chord must enable overlay in target app");
+            SystemClock.sleep(350); check(uiArmed(), "repeated keydown while held must not toggle twice");
+            finishKeyFixture(held);
+            SystemClock.sleep(150); check(uiArmed(), "releasing keys must not toggle");
+            runKeyFixture("reverse");
+            awaitArmed(false, "new reversed chord after both releases must disable");
+            check(fixtureResult()[0] == before, "volume chords must not dispatch a swipe");
+            check("idle".equals(AssistService.getLastGestureStatus()), "volume chord must not send a gesture");
+
+            Intent settings=new Intent(android.provider.Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getTargetContext().startActivity(settings); SystemClock.sleep(900);
+            runKeyFixture("reverse");
+            SystemClock.sleep(300); check(!uiArmed(), "chord outside target must not activate");
+            result.putString("result", "PASS volume key filter: single and slow keys do not arm, chord enables without swipe, repeats do not retoggle, release plus new chord disables, other app cannot activate");
+        } finally {
+            runOnMainSync(AssistService::stopAssist);
+            for (int i=0; i<streams.length; i++) audio.setStreamVolume(streams[i],levels[i],0);
+            for (int i=0; i<streams.length; i++) {
+                int restored=audio.getStreamVolume(streams[i]);
+                android.util.Log.i("VolumeRestore", "stream=" + streams[i] + " before=" + levels[i] + " after=" + restored);
+                check(restored == levels[i], "could not restore emulator audio stream " + streams[i]);
+            }
+        }
+        finish(Activity.RESULT_OK,result);
+    }
+    private boolean uiArmed() {
+        boolean[] result={false}; runOnMainSync(() -> result[0]=AssistService.isAssistArmed()); return result[0];
+    }
+    private void awaitArmed(boolean expected, String message) {
+        for (int i=0; i<30 && uiArmed()!=expected; i++) SystemClock.sleep(50);
+        check(uiArmed()==expected, message);
+    }
+    private java.io.BufferedReader startKeyFixture(String mode) throws Exception {
+        check("ranchu".equals(android.os.Build.HARDWARE) && android.os.Build.PRODUCT.startsWith("sdk_gphone"),
+                "uinput key tests are restricted to an emulator");
+        android.os.ParcelFileDescriptor fd=getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                .executeShellCommand("su 0 /data/local/tmp/slide-volume-uinput " + mode);
+        java.io.BufferedReader reader=new java.io.BufferedReader(new java.io.InputStreamReader(new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)));
+        String ready=reader.readLine();
+        check("READY".equals(ready), "could not start emulator key fixture: " + ready);
+        return reader;
+    }
+    private void finishKeyFixture(java.io.BufferedReader reader) throws Exception {
+        try { check("DONE".equals(reader.readLine()), "key fixture did not complete"); } finally { reader.close(); }
+    }
+    private void runKeyFixture(String mode) throws Exception { finishKeyFixture(startKeyFixture(mode)); }
 
     private Object serviceField(String name) throws Exception {
         java.lang.reflect.Field instance = AssistService.class.getDeclaredField("instance");
@@ -95,16 +373,21 @@ public final class GestureInstrumentation extends Instrumentation {
         fixture.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getTargetContext().startActivity(fixture);
         SystemClock.sleep(1200);
-        serviceCase("release", true);
+        serviceCase("release", true, 0);
+        serviceCase("release", true, 450);
+        serviceCase("release", true, 700);
         serviceCase("immediate", true);
         serviceCase("immediate", false);
         serviceCase("gestures", false);
         runOnMainSync(AssistService::stopAssist);
-        result.putString("result", "PASS service: immediate quick up, immediate held, release held then up, double tap; callback completed and fixture received DOWN/MOVE/UP");
+        result.putString("result", "PASS service: immediate quick up, immediate held, release held then up at 250/450/700ms, double tap; callback completed and fixture received DOWN/MOVE/UP");
         finish(Activity.RESULT_OK, result);
     }
-    private void serviceCase(String mode, boolean hold) throws Exception {
-        getTargetContext().getSharedPreferences("assist_settings", 0).edit().putString("trigger_mode", mode).commit();
+    private void serviceCase(String mode, boolean hold) throws Exception { serviceCase(mode, hold, 0); }
+    private void serviceCase(String mode, boolean hold, int selectedDuration) throws Exception {
+        android.content.SharedPreferences.Editor prefs=getTargetContext().getSharedPreferences("assist_settings", 0).edit().putString("trigger_mode", mode);
+        if (selectedDuration == 0) prefs.remove("swipe_duration_ms"); else prefs.putInt("swipe_duration_ms", selectedDuration);
+        prefs.commit();
         runOnMainSync(() -> {
             if (!AssistService.startAssist())
                 throw new AssertionError("cannot arm service");
@@ -144,6 +427,22 @@ public final class GestureInstrumentation extends Instrumentation {
         SystemClock.sleep(100); result = fixtureResult();
         check(result[0] == before + 1 && result[1] > 0 && result[2] > 100,
                 "fixture did not receive exactly one complete new rightward swipe; before=" + before + " after=" + java.util.Arrays.toString(result));
+        int duration=fixtureDurationFor(result[0]); int expected=selectedDuration == 0 ? 250 : selectedDuration;
+        check(Math.abs(duration-expected) <= 10, "fixture duration " + duration + "ms; expected " + expected + "ms");
+    }
+
+    private int fixtureDurationFor(int count) throws Exception {
+        android.os.ParcelFileDescriptor fd=getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                .executeShellCommand("logcat -d -s SlideFixture:I");
+        java.io.ByteArrayOutputStream output=new java.io.ByteArrayOutputStream();
+        try (java.io.InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)) {
+            byte[] buf=new byte[1024]; int n; while ((n=in.read(buf))!=-1) output.write(buf,0,n);
+        }
+        java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("UP count="+count+" moves=\\d+ dx=-?\\d+ duration=(\\d+)")
+                .matcher(output.toString("UTF-8"));
+        int duration=-1; while (matcher.find()) duration=Integer.parseInt(matcher.group(1));
+        check(duration >= 0,"missing isolated fixture duration for count " + count);
+        return duration;
     }
 
     private int[] fixtureResult() {
@@ -193,6 +492,10 @@ public final class GestureInstrumentation extends Instrumentation {
 
     private void findViews(View v) {
         if (v instanceof ScrollView) scroll = (ScrollView) v;
+        if (v instanceof StatusBubbleView) demoBubble=v;
+        if (v instanceof android.widget.Button && ((android.widget.Button) v).getText().toString().contains("展开设置")) expandSettings=(android.widget.Button)v;
+        if (v instanceof RadioButton && ((RadioButton) v).getText().toString().contains("按下立即")) immediateMode=(RadioButton)v;
+        if (v instanceof RadioButton && ((RadioButton) v).getText().toString().contains("700 毫秒")) slowDuration=(RadioButton)v;
         if (v instanceof RadioButton && ((RadioButton) v).getText().toString().contains("抬起手指")) releaseMode = (RadioButton) v;
         if (v instanceof RadioButton && ((RadioButton) v).getText().toString().contains("单指双击")) gestureMode = (RadioButton) v;
         if (v instanceof DemoSliderView) sliders.add((DemoSliderView) v);
@@ -209,7 +512,13 @@ public final class GestureInstrumentation extends Instrumentation {
         });
         waitForIdleSync(); SystemClock.sleep(150);
     }
-    private void reset(DemoSliderView v) { runOnMainSync(v::reset); waitForIdleSync(); }
+    private void reset(DemoSliderView v) {
+        runOnMainSync(() -> {
+            v.reset();
+            if (demoBubble != null && String.valueOf(demoBubble.getContentDescription()).contains("辅助已关闭")) demoBubble.performClick();
+        });
+        waitForIdleSync();
+    }
     private boolean done(DemoSliderView v) {
         final boolean[] result = {false};
         runOnMainSync(() -> result[0] = v.getContentDescription().toString().contains("模拟抢单成功"));
