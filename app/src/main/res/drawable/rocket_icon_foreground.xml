@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the complete flame inside the adaptive mask; the original artwork stays unchanged. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="12dp">
+    <bitmap android:src="@drawable/rocket_icon_art" android:gravity="fill" />
+</inset>

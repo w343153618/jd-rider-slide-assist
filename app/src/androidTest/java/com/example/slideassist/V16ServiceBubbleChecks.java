@@ -196,8 +196,16 @@ public final class V16ServiceBubbleChecks {
         }
         event(v, down, MotionEvent.ACTION_UP, destinationCenterX, destinationCenterY);
         check(AssistService.isAssistArmed(), "drag must preserve assistance state");
-        check(bubbleLayout(service).width == Math.round(120 * v.getResources().getDisplayMetrics().density),
-                "release must apply the deferred size preference");
+        check(bubbleLayout(service).width == Math.round(4 * v.getResources().getDisplayMetrics().density)
+                        && bubbleLayout(service).height == Math.round(120 * v.getResources().getDisplayMetrics().density)
+                        && v.isCollapsed(),
+                "release must apply the deferred height preference while collapsing visible width to4dp");
+        lp=bubbleLayout(service);down=SystemClock.uptimeMillis();
+        float expandX=lp.x+lp.width/2f,expandY=lp.y+lp.height/2f;
+        event(v,down,MotionEvent.ACTION_DOWN,expandX,expandY);event(v,down,MotionEvent.ACTION_UP,expandX,expandY);
+        check(bubbleLayout(service).width==Math.round(120*v.getResources().getDisplayMetrics().density)
+                        && !v.isCollapsed() && AssistService.isAssistArmed(),
+                "first collapsed tap must expand the deferred full size without toggling assistance");
     }
     private static void tap(Instrumentation i, Object service) {
         onMain(i, () -> {

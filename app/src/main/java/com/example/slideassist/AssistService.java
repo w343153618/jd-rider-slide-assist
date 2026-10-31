@@ -53,6 +53,7 @@ public class AssistService extends AccessibilityService {
     private int bubbleX = -1, bubbleY = -1;
     private boolean bubbleTouchActive;
     private boolean bubbleDockedLeft;
+    private boolean bubbleCollapsed;
     private boolean serviceStopping;
     private boolean gestureInFlight;
     private int gestureInFlightToken = -1;
@@ -281,23 +282,32 @@ public class AssistService extends AccessibilityService {
     private void showStatusBubble() {
         if (statusBubble != null || serviceStopping) return;
         int[] screen = screenSize();
-        int bubbleWidth = configuredBubbleSizePx();
+        int size = configuredBubbleSizePx();
+        int bubbleWidth = bubbleCollapsed ? dp(BubbleSettings.COLLAPSED_WIDTH_DP) : size;
         bubbleX = BubblePlacement.dockedX(bubbleDockedLeft, screen[0], bubbleWidth);
         if (bubbleY < 0) bubbleY = screen[1] / 3;
         bubbleY = clampBubbleY(bubbleY);
         statusBubble = new StatusBubbleView(this);
+        statusBubble.setCollapsed(bubbleCollapsed);
         statusBubble.setOpacityPercent(getSharedPreferences(PREFS, MODE_PRIVATE)
                 .getInt(BubbleSettings.OPACITY_PREF, BubbleSettings.DEFAULT_OPACITY_PERCENT));
         statusBubble.setActive(armed);
-        bubbleLayout = new WindowManager.LayoutParams(bubbleWidth, bubbleWidth,
+        bubbleLayout = new WindowManager.LayoutParams(bubbleWidth, size,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         // Physical X coordinates make both edge positions independent of layout direction.
         bubbleLayout.gravity = Gravity.TOP | Gravity.LEFT;
+        // Keep the visible strip and its hit target together during edge docking.
+        // https://developer.android.com/reference/android/view/WindowManager.LayoutParams#setCanPlayMoveAnimation(boolean)
+        if (Build.VERSION.SDK_INT >= 34) bubbleLayout.setCanPlayMoveAnimation(false);
         bubbleLayout.x = bubbleX;
         bubbleLayout.y = bubbleY;
         statusBubble.setOnClickListener(v -> toggleByStatusBubble());
+        statusBubble.setOnExpandListener(() -> {
+            bubbleCollapsed = false;
+            updateStatusBubble();
+        });
         statusBubble.setOnTouchListener(new BubbleTouch());
         try { windows.addView(statusBubble, bubbleLayout); }
         catch (RuntimeException e) { statusBubble = null; bubbleLayout = null; }
@@ -319,9 +329,10 @@ public class AssistService extends AccessibilityService {
     private void updateBubbleSize() {
         if (bubbleTouchActive || statusBubble == null || bubbleLayout == null) return;
         int size = configuredBubbleSizePx();
-        if (bubbleLayout.width == size && bubbleLayout.height == size) return;
-        bubbleLayout.width = bubbleLayout.height = size;
-        bubbleX = BubblePlacement.dockedX(bubbleDockedLeft, screenSize()[0], size);
+        int visibleWidth = bubbleCollapsed ? dp(BubbleSettings.COLLAPSED_WIDTH_DP) : size;
+        if (bubbleLayout.width == visibleWidth && bubbleLayout.height == size) return;
+        bubbleLayout.width = visibleWidth; bubbleLayout.height = size;
+        bubbleX = BubblePlacement.dockedX(bubbleDockedLeft, screenSize()[0], visibleWidth);
         bubbleY = clampBubbleY(bubbleY);
         bubbleLayout.x = bubbleX; bubbleLayout.y = bubbleY;
         try { windows.updateViewLayout(statusBubble, bubbleLayout); }
@@ -369,6 +380,11 @@ public class AssistService extends AccessibilityService {
                     snapBubbleToEdge();
                     if (moved || invalid) {
                         if (statusBubble != null) statusBubble.resetTapSequence();
+                        if (moved && !invalid && statusBubble != null) {
+                            bubbleCollapsed = true;
+                            statusBubble.setCollapsed(true);
+                            updateBubbleSize();
+                        }
                         avoidBubbleOverlap();
                     } else view.performClick();
                     updateStatusBubble();

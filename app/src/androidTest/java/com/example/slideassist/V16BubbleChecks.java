@@ -217,10 +217,19 @@ public final class V16BubbleChecks {
         event(i,bubble,down,MotionEvent.ACTION_UP,target[0],target[1]);i.waitForIdleSync();
         ui(i,()->{
             View parent=(View)bubble.getParent();
+            int strip=Math.round(4*bubble.getResources().getDisplayMetrics().density);
+            check(bubble.getWidth()==strip && bubble.isCollapsed(),"drag release must leave only a4dp visible strip");
             near(edge==0?0:parent.getWidth()-bubble.getWidth(),bubble.getX(),"release must snap to nearest physical side");
             check(bubble.getY()>=0 && bubble.getY()+bubble.getHeight()<=parent.getHeight()+1,"docked bubble must remain vertically on screen");
         });
         check(active(bubble)==before,"drag after two taps must never become the third tap");
+        tap(i,bubble);i.waitForIdleSync();
+        ui(i,()->{
+            check(!bubble.isCollapsed() && bubble.getWidth()==bubble.getHeight(),"one strip tap must restore the selected full control");
+            View parent=(View)bubble.getParent();
+            near(edge==0?0:parent.getWidth()-bubble.getWidth(),bubble.getX(),"expansion must retain the selected physical side");
+        });
+        check(active(bubble)==before,"expansion after drag must not count as the third toggle tap");
     }
     private static void componentChecks(Instrumentation i,Activity a) {
         StatusBubbleView[] control=new StatusBubbleView[1];int[] toggles={0};

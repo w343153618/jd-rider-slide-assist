@@ -30,6 +30,12 @@ public final class BubblePlacementTest {
                 "changing size preserves the physical right edge");
         check(BubblePlacement.dockedX(true, 360, 32) == 0 && BubblePlacement.dockedX(true, 360, 120) == 0,
                 "changing size preserves the physical left edge");
+        check(BubbleSettings.COLLAPSED_WIDTH_DP == 4, "collapsed control exposes only a four dp strip");
+        check(BubblePlacement.dockedX(true, 360, BubbleSettings.COLLAPSED_WIDTH_DP) == 0
+                        && BubblePlacement.dockedX(false, 360, BubbleSettings.COLLAPSED_WIDTH_DP) == 356,
+                "collapsed strip docks at both physical edges with its actual narrow width");
+        check(!BubblePlacement.overlapsHorizontal(356, BubbleSettings.COLLAPSED_WIDTH_DP, 0, 350),
+                "collapsed strip must not cover the previous full floating square");
         check(!BubblePlacement.overlapsHorizontal(0, 36, 100, 250),
                 "left-docked bubble must not avoid a disjoint strip to its right");
         check(!BubblePlacement.overlapsHorizontal(324, 36, 0, 300),

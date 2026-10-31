@@ -65,7 +65,7 @@ public final class MainActivity extends Activity {
 
         TextView eyebrow = text("手动决定 · 辅助滑动", 13, ORANGE, true);
         page.addView(eyebrow);
-        TextView title = text("滑动辅助", 28, INK, true);
+        TextView title = text("大爷骑火箭", 28, INK, true);
         addTop(page, title, 5);
         TextView intro = text("京东秒送骑士专用 · 请先在模拟订单中练习", 15, MUTED, false);
         intro.setLineSpacing(dp(3), 1f);
@@ -128,7 +128,7 @@ public final class MainActivity extends Activity {
         opacityMax.setGravity(Gravity.END);
         opacityLimits.addView(opacityMax, new LinearLayout.LayoutParams(0, -2, 1));
         addTop(bubbleOptions, opacityLimits, 0);
-        addTop(bubbleOptions, text("绿色电话下方出现计时表示辅助已开启，无计时表示关闭。连续轻点三次切换；拖动松手吸附左右边缘。大小和可见度即时生效并保留，模拟页与真实辅助页共用。", 13, MUTED, false), 8);
+        addTop(bubbleOptions, text("绿色电话下方出现计时表示辅助已开启，无计时表示关闭。拖动松手后收进左右边缘，只留一条窄边；点窄边先展开，再连续轻点三次切换。大小和可见度即时生效并保留，模拟页与真实辅助页共用。", 13, MUTED, false), 8);
         bubbleMenu.setOnClickListener(v -> {
             boolean show = bubbleOptions.getVisibility() != View.VISIBLE;
             bubbleOptions.setVisibility(show ? View.VISIBLE : View.GONE);
@@ -244,7 +244,7 @@ public final class MainActivity extends Activity {
         });
         addTop(setupDetails, text("真实页面辅助的时长设置。模拟订单下方可独立选择练习时长；手动测速不使用自动时长。", 14, MUTED, false), 4);
         addTop(setupDetails, text("音量键快捷开关", 15, INK, true), 14);
-        TextView shortcut = text("先开启无障碍服务。在骑士页面，同时短按音量＋和音量－，开启或关闭辅助。也可连续轻点贴边电话浮标三次切换，可拖动电话浮标并吸附左右边缘。单击、双击不切换。开启后对齐完整橙色滑条和左侧白色箭头块；只有从白色块内按下才触发，并从最初按下的位置向右拖。每次滑动结束会自动关闭。两键全部松开后才能再次切换。\n正常音量可能变化；请勿长按，以免触发系统快捷方式。若手机无法接收组合键，可使用电话浮标或下方按钮。", 14, MUTED, false);
+        TextView shortcut = text("先开启无障碍服务。在骑士页面，同时短按音量＋和音量－，开启或关闭辅助。也可连续轻点贴边电话浮标三次切换，拖动松手后浮标收进边缘，点窄边先展开，再三击切换。展开时单击、双击不切换。开启后对齐完整橙色滑条和左侧白色箭头块；只有从白色块内按下才触发，并从最初按下的位置向右拖。每次滑动结束会自动关闭。两键全部松开后才能再次切换。\n正常音量可能变化；请勿长按，以免触发系统快捷方式。若手机无法接收组合键，可使用电话浮标或下方按钮。", 14, MUTED, false);
         shortcut.setLineSpacing(dp(2), 1f);
         addTop(setupDetails, shortcut, 6);
         TextView setupHint = text("启动辅助会打开京东秒送骑士。人工移动、调整浮层对齐完整抢单条，并核对白色触发框与左侧箭头块重合。只有白色块内起手才触发；橙色其余位置或外起手移入不触发。浮层会遮挡其下触摸，滚动列表请从浮层外起手。每次触发、离开应用或滚动列表后真实辅助会关闭，需重新开启和对齐。", 14, MUTED, false);
@@ -324,6 +324,8 @@ public final class MainActivity extends Activity {
         demoBubble.setOpacityPercent(opacity);
         demoBubble.setActive(demoAssistEnabled);
         demoBubble.setOnClickListener(v -> setDemoAssistEnabled(!demoAssistEnabled));
+        demoBubble.setOnExpandListener(() -> resizeDemoBubble(getSharedPreferences("assist_settings", MODE_PRIVATE)
+                .getInt(BubbleSettings.SIZE_PREF, BubbleSettings.DEFAULT_SIZE_DP)));
         demoBubble.setOnTouchListener(new View.OnTouchListener() {
             float startX, startY, initialX, initialY;
             boolean dragged, invalid;
@@ -360,6 +362,11 @@ public final class MainActivity extends Activity {
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP) {
                     snap(view);
+                    if (dragged && !invalid) {
+                        demoBubble.setCollapsed(true);
+                        resizeDemoBubble(getSharedPreferences("assist_settings", MODE_PRIVATE)
+                                .getInt(BubbleSettings.SIZE_PREF, BubbleSettings.DEFAULT_SIZE_DP));
+                    }
                     if (!dragged && !invalid) view.performClick();
                 }
                 return true;
@@ -372,10 +379,11 @@ public final class MainActivity extends Activity {
         if (demoBubble == null) return;
         View parent = (View) demoBubble.getParent();
         int size = dp(BubbleSettings.normalizeSizeDp(sizeDp));
+        int visibleWidth = demoBubble.isCollapsed() ? dp(BubbleSettings.COLLAPSED_WIDTH_DP) : size;
         boolean left = BubblePlacement.snapX(Math.round(demoBubble.getX()),
                 parent.getWidth(), demoBubble.getWidth()) == 0;
-        FrameLayout.LayoutParams position = new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.LEFT);
-        position.leftMargin = left ? 0 : Math.max(0, parent.getWidth() - size);
+        FrameLayout.LayoutParams position = new FrameLayout.LayoutParams(visibleWidth, size, Gravity.TOP | Gravity.LEFT);
+        position.leftMargin = BubblePlacement.dockedX(left, parent.getWidth(), visibleWidth);
         position.topMargin = Math.max(dp(48), Math.min(Math.max(dp(48), parent.getHeight() - size - dp(24)),
                 Math.round(demoBubble.getY())));
         // Convert any drag translation into layout coordinates before changing the size.
@@ -421,7 +429,7 @@ public final class MainActivity extends Activity {
     private void updateDemoHint(String mode) {
         if (demoHint == null) return;
         if (!demoAssistEnabled) {
-            demoHint.setText("练习辅助已关闭。连续轻点贴边电话浮标三次，或同时短按音量加减键开启；关闭时仍可从左侧白色手柄手动拖动。电话浮标仅控制本页练习，不操作真实订单。");
+            demoHint.setText("练习辅助已关闭。点窄边展开后连续轻点电话浮标三次，或同时短按音量加减键开启；关闭时仍可从左侧白色手柄手动拖动。电话浮标仅控制本页练习，不操作真实订单。");
             return;
         }
         String instruction = "gestures".equals(mode)
@@ -429,7 +437,7 @@ public final class MainActivity extends Activity {
                 : "release".equals(mode)
                 ? "以下均为虚构订单，不会产生真实接单。在左侧白色箭头块内按下，最初的手指抬起时即模拟抢单；起点使用最初按下坐标。"
                 : "以下均为虚构订单，不会产生真实接单。手指一按下左侧白色箭头块就从该位置向右辅助拖动；橙色其他位置不触发。";
-        demoHint.setText("练习辅助已开启。连续轻点贴边电话浮标三次可关闭，拖动后吸附左右边缘。每次结束并抬手后0.2秒自动复位，可直接再练；次数会保留。电话浮标仅控制本页练习。\n" + instruction);
+        demoHint.setText("练习辅助已开启。连续轻点贴边电话浮标三次可关闭，拖动松手收进边缘，点窄边先展开。每次结束并抬手后0.2秒自动复位，可直接再练；次数会保留。电话浮标仅控制本页练习。\n" + instruction);
     }
 
     void setDemoAssistEnabled(boolean enabled) {

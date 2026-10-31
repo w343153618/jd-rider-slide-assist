@@ -10,12 +10,12 @@ android {
         applicationId 'com.example.slideassist'
         buildConfigField 'String', 'TARGET_PACKAGE', '"com.dada.mobile.android"'
         manifestPlaceholders.targetPackage = 'com.dada.mobile.android'
-        manifestPlaceholders.appLabel = '骑士滑动辅助'
+        manifestPlaceholders.appLabel = '大爷骑火箭'
         minSdk 24
         targetSdk 35
         testInstrumentationRunner 'com.example.slideassist.GestureInstrumentation'
-        versionCode 11
-        versionName '1.7.0'
+        versionCode 12
+        versionName '1.8.0'
     }
     signingConfigs {
         release {
@@ -35,7 +35,7 @@ android {
         fixtureCheck {
             initWith debug
             applicationIdSuffix '.testfixture'
-            manifestPlaceholders.appLabel = '滑动辅助·测试夹具'
+            manifestPlaceholders.appLabel = '大爷骑火箭·测试夹具'
             matchingFallbacks = ['debug']
             buildConfigField 'String', 'TARGET_PACKAGE', '"com.example.slideassist.fixture"'
             manifestPlaceholders.targetPackage = 'com.example.slideassist.fixture'

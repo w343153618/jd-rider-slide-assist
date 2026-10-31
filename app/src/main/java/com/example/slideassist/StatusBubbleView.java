@@ -23,6 +23,8 @@ public final class StatusBubbleView extends TextView {
     private final Path handset = new Path();
     private final GradientDrawable square = new GradientDrawable();
     private boolean active;
+    private boolean collapsed;
+    private Runnable onExpand;
     private int opacityPercent = DEFAULT_OPACITY_PERCENT;
     private long startedElapsedMillis = -1;
     private boolean tickPosted;
@@ -57,6 +59,14 @@ public final class StatusBubbleView extends TextView {
     }
     public int getOpacityPercent() { return opacityPercent; }
 
+    public void setCollapsed(boolean value) {
+        if (collapsed == value) return;
+        collapsed = value; resetTapSequence();
+        updateVisualMetrics(getWidth(), getHeight()); refreshTimer();
+    }
+    public boolean isCollapsed() { return collapsed; }
+    public void setOnExpandListener(Runnable listener) { onExpand = listener; }
+
     public void setActive(boolean active) {
         if (this.active != active) {
             resetTapSequence();
@@ -73,9 +83,9 @@ public final class StatusBubbleView extends TextView {
 
     private void refreshTimer() {
         long elapsed = getElapsedActiveMillis();
-        setText(active ? BubbleTimer.formatElapsedMillis(elapsed) : ""); fitTimerText();
-        setContentDescription(active ? "辅助已开启，已持续" + elapsed / 1000
-                + "秒，连续轻点三次关闭" : "辅助已关闭，连续轻点三次开启");
+        setText(active && !collapsed ? BubbleTimer.formatElapsedMillis(elapsed) : ""); fitTimerText();
+        String state = active ? "辅助已开启，已持续" + elapsed / 1000 + "秒" : "辅助已关闭";
+        setContentDescription(state + (collapsed ? "，已折叠，轻点展开" : active ? "，连续轻点三次关闭" : "，连续轻点三次开启"));
         invalidate();
         if (!active) stopTick();
         else if (!tickPosted && isAttachedToWindow()) {
@@ -94,12 +104,7 @@ public final class StatusBubbleView extends TextView {
     @Override protected void onDetachedFromWindow() { stopTick(); super.onDetachedFromWindow(); }
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        float side = Math.min(w, h);
-        setTextSize(TypedValue.COMPLEX_UNIT_PX, side * .25f);
-        int horizontal = Math.round(side * .05f);
-        setPadding(horizontal, 0, horizontal, Math.round(side * .035f));
-        square.setCornerRadius(side * 6f / 64f);
-        fitTimerText();
+        updateVisualMetrics(w, h);
         if (Build.VERSION.SDK_INT >= 29) {
             // Reserve only this small control so its edge drag does not become Android Back.
             // https://developer.android.com/develop/ui/views/touch-and-input/gestures/gesturenav
@@ -107,7 +112,26 @@ public final class StatusBubbleView extends TextView {
                     ? Collections.singletonList(new Rect(0, 0, w, h)) : Collections.emptyList());
         }
     }
+    private void updateVisualMetrics(int w, int h) {
+        float side = Math.min(w, h);
+        if (collapsed) {
+            setPadding(0, 0, 0, 0); square.setCornerRadius(side / 2f); return;
+        }
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, side * .25f);
+        int horizontal = Math.round(side * .05f);
+        setPadding(horizontal, 0, horizontal, Math.round(side * .035f));
+        square.setCornerRadius(side * 6f / 64f);
+        fitTimerText();
+    }
     @Override protected void onDraw(Canvas canvas) {
+        if (collapsed) {
+            float inset = getHeight() * .2f;
+            iconPaint.setStyle(Paint.Style.STROKE); iconPaint.setStrokeCap(Paint.Cap.ROUND);
+            iconPaint.setStrokeWidth(getResources().getDisplayMetrics().density);
+            canvas.drawLine(getWidth() / 2f, inset, getWidth() / 2f, getHeight() - inset, iconPaint);
+            iconPaint.setStyle(Paint.Style.FILL);
+            return;
+        }
         float side = Math.min(getWidth(), getHeight());
         float size = side * (active ? 15f / 28f : 19f / 28f);
         float top = active ? side * .05f : (getHeight() - size) / 2f;
@@ -119,6 +143,11 @@ public final class StatusBubbleView extends TextView {
     public void resetTapSequence() { taps.reset(); }
 
     @Override public boolean performClick() {
+        if (collapsed) {
+            setCollapsed(false);
+            if (onExpand != null) onExpand.run();
+            return true;
+        }
         // Only a confirmed triple calls the listener and Android's standard click feedback.
         // https://developer.android.com/reference/android/view/View#performClick()
         return taps.onTap(SystemClock.uptimeMillis()) && super.performClick();
