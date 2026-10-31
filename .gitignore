@@ -1,0 +1,17 @@
+.gradle/
+build/
+**/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+*.apk
+*.aab
+*.jks
+*.keystore
+*.pem
+.env*
+.private/
+artifacts/
+local-test-output/
+模拟订单预览.png
