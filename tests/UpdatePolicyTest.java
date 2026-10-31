@@ -15,11 +15,12 @@ public final class UpdatePolicyTest {
         if (!condition) throw new AssertionError(label);
     }
     public static void main(String[] args) throws Exception {
-        String[] allowed = {"https://api.github.com/repos/x/y", "https://github.com/x/y",
+        require(UpdateManager.METADATA_URL.equals("https://github.com/w343153618/jd-rider-slide-assist/releases/latest/download/update.json"), "fixed metadata URL");
+        String[] allowed = {"https://github.com/x/y",
                 "https://release-assets.githubusercontent.com/file?token=example",
                 "https://objects.githubusercontent.com/file", "https://github-releases.githubusercontent.com/file"};
         for (String url : allowed) UpdateManager.requireHost(new URL(url));
-        String[] denied = {"http://github.com/x", "https://github.com.evil.invalid/x",
+        String[] denied = {"https://api.github.com/repos/x/y", "http://github.com/x", "https://github.com.evil.invalid/x",
                 "https://evil-github.com/x", "https://github.com@evil.invalid/x",
                 "https://evil.invalid@github.com/x", "https://github.com:444/x",
                 "https://github.com/x#fragment", "https://127.0.0.1/x"};

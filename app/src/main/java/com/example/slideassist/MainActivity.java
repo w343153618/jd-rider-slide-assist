@@ -139,12 +139,12 @@ public final class MainActivity extends Activity {
         durations.setOrientation(RadioGroup.VERTICAL);
         int savedDuration = SwipeTiming.normalize(getSharedPreferences("assist_settings", MODE_PRIVATE)
                 .getInt("swipe_duration_ms", SwipeTiming.DEFAULT_MILLIS));
-        for (int duration : new int[] {250, 450, 700}) {
+        for (int duration : new int[] {100, 150, 200, 250, 450, 700}) {
             RadioButton option = new RadioButton(this);
             option.setId(View.generateViewId());
             option.setTag(duration);
-            option.setText(duration + " 毫秒" + (duration == 250 ? " · 快速（默认）"
-                    : duration == 450 ? " · 适中" : " · 较慢"));
+            option.setText(duration + " 毫秒" + (duration == 250 ? " · 默认"
+                    : duration == 450 ? " · 适中" : duration == 700 ? " · 较慢" : ""));
             option.setTextColor(INK);
             option.setMinHeight(dp(48));
             durations.addView(option);

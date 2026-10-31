@@ -21,6 +21,7 @@ public final class GestureInstrumentation extends Instrumentation {
     private final List<DemoSliderView> sliders = new ArrayList<>();
     private ScrollView scroll;
     private RadioButton gestureMode, releaseMode, immediateMode, slowDuration;
+    private final java.util.Map<Integer, RadioButton> durationOptions = new java.util.HashMap<>();
     private android.widget.Button expandSettings;
     private View demoBubble;
     private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest;
@@ -46,6 +47,9 @@ public final class GestureInstrumentation extends Instrumentation {
                 findViews(root);
             });
             check(sliders.size() >= 2 && scroll != null, "expected multiple demo orders");
+            for (int millis : new int[]{100,150,200,250,450,700})
+                check(durationOptions.containsKey(millis), "duration option missing: " + millis);
+            check(durationOptions.get(250).isChecked(), "250ms must be selected by default");
             DemoSliderView one = sliders.get(0), two = sliders.get(1);
             select(one); outsideTap(one); pause(); check(!done(one), "touch outside slider must not complete");
             select(one); outsideDragIn(one); pause(); check(!done(one), "outside start dragged into slider must not complete");
@@ -75,7 +79,13 @@ public final class GestureInstrumentation extends Instrumentation {
             reset(two); reset(one); select(one);
             runOnMainSync(() -> {
                 check(expandSettings != null && immediateMode != null && slowDuration != null, "settings controls missing");
-                expandSettings.performClick(); immediateMode.performClick(); slowDuration.performClick();
+                expandSettings.performClick(); immediateMode.performClick();
+                for (int millis : new int[]{100,150,200}) {
+                    durationOptions.get(millis).performClick();
+                    check(getTargetContext().getSharedPreferences("assist_settings",0).getInt("swipe_duration_ms",0)==millis,
+                            "duration selection not saved: " + millis);
+                }
+                slowDuration.performClick();
             });
             check(getTargetContext().getSharedPreferences("assist_settings",0).getInt("swipe_duration_ms",0)==700,
                     "duration setting must persist in preferences");
@@ -93,11 +103,11 @@ public final class GestureInstrumentation extends Instrumentation {
             check(!done(two), "touching another order while first animates must not start another assisted swipe");
             send(durationDown,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,new float[][]{durationPoint});
             runOnMainSync(activity::finish); waitForIdleSync();
-            sliders.clear(); scroll=null; slowDuration=null;
+            sliders.clear(); durationOptions.clear(); scroll=null; slowDuration=null;
             Activity reopened=startActivitySync(intent); waitForIdleSync();
             runOnMainSync(() -> findViews(reopened.getWindow().getDecorView()));
             check(slowDuration != null && slowDuration.isChecked(), "700ms choice must remain selected after reopening");
-            result.putString("result", "PASS: immediate on down while held, outside touch and drag, release on up not down, release outside, first finger release, gesture mode single tap, double tap, two-finger tap, movement, three-finger tap, independent orders, demo bubble auto-OFF and tap to enable, second-order race prevented, 700ms demo timing and selection after reopening");
+            result.putString("result", "PASS: immediate on down while held, outside touch and drag, release on up not down, release outside, first finger release, gesture mode single tap, double tap, two-finger tap, movement, three-finger tap, independent orders, demo bubble auto-OFF and tap to enable, second-order race prevented, all six duration options and faster selections, 700ms demo timing and selection after reopening");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable e) {
             result.putString("result", "FAIL: " + e);
@@ -122,6 +132,7 @@ public final class GestureInstrumentation extends Instrumentation {
         rejects(() -> UpdateManager.requireHost(new java.net.URL("https://github.com:444/")),"unexpected port must be rejected");
         UpdateManager.requireHost(new java.net.URL("https://github.com/"));
         String asset="https://github.com/w343153618/jd-rider-slide-assist/releases/download/v1.2.0/jd-rider-slide-assist.apk";
+        testUpdateMetadata(asset);
         UpdateManager.requireAssetUrl(asset,"v1.2.0","jd-rider-slide-assist.apk");
         rejects(() -> UpdateManager.requireAssetUrl(asset.replace("v1.2.0","v1.2.1"),"v1.2.0","jd-rider-slide-assist.apk"),"mismatched release tag must be rejected");
         java.lang.reflect.Field hashField=UpdateManager.class.getDeclaredField("SHA_PATTERN"); hashField.setAccessible(true);
@@ -166,8 +177,36 @@ public final class GestureInstrumentation extends Instrumentation {
                 check(String.valueOf(e.getCause().getMessage()).contains("签名"), "wrong signer must fail specifically on signature: "+e.getCause());
             }
         } finally { check(wrongSigner.delete(),"wrong signer test cleanup"); }
-        result.putString("result","PASS updater: versions, hosts, asset URL, checksum format, provider read-only/URI, same-version, foreign-package and wrong-signer rejection");
+        result.putString("result","PASS updater: metadata parsing, versions, hosts, asset URL, checksum format, provider read-only/URI, same-version, foreign-package and wrong-signer rejection");
         finish(Activity.RESULT_OK,result);
+    }
+
+    private void testUpdateMetadata(String asset) throws Exception {
+        org.json.JSONObject apk=new org.json.JSONObject().put("name","jd-rider-slide-assist.apk").put("browser_download_url",asset);
+        org.json.JSONObject sha=new org.json.JSONObject().put("name","jd-rider-slide-assist.apk.sha256").put("browser_download_url",asset+".sha256");
+        org.json.JSONObject valid=new org.json.JSONObject().put("tag_name","v1.2.0").put("draft",false).put("prerelease",false)
+                .put("body","release notes").put("assets",new org.json.JSONArray().put(apk).put(sha));
+        UpdateManager.ReleaseMetadata release=UpdateManager.parseMetadata(valid.toString());
+        check("v1.2.0".equals(release.tag) && asset.equals(release.apkUrl) && (asset+".sha256").equals(release.shaUrl),"valid metadata must parse");
+        org.json.JSONObject draft=new org.json.JSONObject(valid.toString()).put("draft",true);
+        rejects(() -> UpdateManager.parseMetadata(draft.toString()),"draft releases rejected");
+        org.json.JSONObject pre=new org.json.JSONObject(valid.toString()).put("prerelease",true);
+        rejects(() -> UpdateManager.parseMetadata(pre.toString()),"prereleases rejected");
+        org.json.JSONObject missing=new org.json.JSONObject(valid.toString()); missing.remove("draft");
+        rejects(() -> UpdateManager.parseMetadata(missing.toString()),"missing publication status rejected");
+        org.json.JSONObject wrongType=new org.json.JSONObject(valid.toString()).put("draft","false");
+        rejects(() -> UpdateManager.parseMetadata(wrongType.toString()),"publication status must be a boolean");
+        org.json.JSONObject duplicate=new org.json.JSONObject(valid.toString()).put("assets",new org.json.JSONArray().put(apk).put(apk).put(sha));
+        rejects(() -> UpdateManager.parseMetadata(duplicate.toString()),"duplicate asset rejected");
+        org.json.JSONObject absent=new org.json.JSONObject(valid.toString()).put("assets",new org.json.JSONArray().put(apk));
+        rejects(() -> UpdateManager.parseMetadata(absent.toString()),"missing checksum asset rejected");
+        org.json.JSONObject badUrl=new org.json.JSONObject(valid.toString()).put("assets",new org.json.JSONArray().put(
+                new org.json.JSONObject().put("name","jd-rider-slide-assist.apk").put("browser_download_url","https://evil.invalid/payload.apk")).put(sha));
+        rejects(() -> UpdateManager.parseMetadata(badUrl.toString()),"untrusted asset URL rejected");
+        StringBuilder longNotes=new StringBuilder(); for(int i=0; i<2000; i++) longNotes.append('x');
+        org.json.JSONObject longBody=new org.json.JSONObject(valid.toString()).put("body",longNotes.toString());
+        String notes=UpdateManager.parseMetadata(longBody.toString()).notes;
+        check(notes.length()==1601 && notes.endsWith("…"),"release notes must be truncated for display");
     }
 
     private void testPending(Bundle result) throws Exception {
@@ -374,13 +413,16 @@ public final class GestureInstrumentation extends Instrumentation {
         getTargetContext().startActivity(fixture);
         SystemClock.sleep(1200);
         serviceCase("release", true, 0);
+        serviceCase("release", true, 100);
+        serviceCase("release", true, 150);
+        serviceCase("release", true, 200);
         serviceCase("release", true, 450);
         serviceCase("release", true, 700);
         serviceCase("immediate", true);
         serviceCase("immediate", false);
         serviceCase("gestures", false);
         runOnMainSync(AssistService::stopAssist);
-        result.putString("result", "PASS service: immediate quick up, immediate held, release held then up at 250/450/700ms, double tap; callback completed and fixture received DOWN/MOVE/UP");
+        result.putString("result", "PASS service: immediate quick up, immediate held, release held then up at 100/150/200/250/450/700ms, double tap; callback completed and fixture received DOWN/MOVE/UP");
         finish(Activity.RESULT_OK, result);
     }
     private void serviceCase(String mode, boolean hold) throws Exception { serviceCase(mode, hold, 0); }
@@ -492,6 +534,7 @@ public final class GestureInstrumentation extends Instrumentation {
 
     private void findViews(View v) {
         if (v instanceof ScrollView) scroll = (ScrollView) v;
+        if (v instanceof RadioButton && v.getTag() instanceof Integer) durationOptions.put((Integer)v.getTag(), (RadioButton)v);
         if (v instanceof StatusBubbleView) demoBubble=v;
         if (v instanceof android.widget.Button && ((android.widget.Button) v).getText().toString().contains("展开设置")) expandSettings=(android.widget.Button)v;
         if (v instanceof RadioButton && ((RadioButton) v).getText().toString().contains("按下立即")) immediateMode=(RadioButton)v;

@@ -30,11 +30,12 @@ cp app/build/outputs/apk/release/app-release.apk artifacts/release/jd-rider-slid
 
 - `jd-rider-slide-assist.apk`
 - `jd-rider-slide-assist.apk.sha256`
+- `update.json`：包含 tag_name、body、draft=false、prerelease=false 和上述两个资源的 assets（name/browser_download_url），资源 URL 指向本仓库的相同版本标签。
 
 发布后回读 API 的最新版本、资源名及摘要，下载一次对照本地签名产物；验证应用内检查更新与升级安装。APK 的 versionName 必须和发布标签一致。不要将测试夹具、debug 签名包或有不同包名的 APK 作为更新资产。
 
 ## 用户流程和边界
 
-只有主动点按检查/下载才联网。更新检查使用 GitHub 的公开 API，不需要用户账号或 Token。网络失败可稍后重试，旧版功能仍可继续使用。
+只有主动点按检查/下载才联网。更新检查下载 GitHub 最新正式发布的固定 update.json，不使用有匿名配额限制的 API，不需要用户账号或 Token。网络失败可稍后重试，旧版功能仍可继续使用。
 
 下载后校验摘要和包信息，拒绝不同包、非递增版本或签名证书不匹配的文件。缓存按摘要命名，不替换已授予系统安装器读取权限的文件。用户在系统设置允许安装来源后，仍需点击确认安装。操作取消、关闭应用或文件异常不会触发静默安装。

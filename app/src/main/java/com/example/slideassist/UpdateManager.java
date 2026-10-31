@@ -40,7 +40,7 @@ import java.util.regex.Pattern;
 /** Explicit, user-initiated GitHub release update. Android still confirms installation. */
 public final class UpdateManager {
     private static final String REPO = "w343153618/jd-rider-slide-assist";
-    private static final String API = "https://api.github.com/repos/" + REPO + "/releases/latest";
+    static final String METADATA_URL = "https://github.com/" + REPO + "/releases/latest/download/update.json";
     private static final String APK = "jd-rider-slide-assist.apk";
     private static final String SHA = APK + ".sha256";
     private static final int JSON_LIMIT = 512 * 1024, SHA_LIMIT = 4096, APK_LIMIT = 20 * 1024 * 1024;
@@ -75,31 +75,15 @@ public final class UpdateManager {
         final int token = begin("正在检查更新");
         executor.execute(() -> {
             try {
-                String raw = new String(readBytes(new URL(API), JSON_LIMIT, token), StandardCharsets.UTF_8);
-                JSONObject json = new JSONObject(raw);
-                String tag = json.getString("tag_name");
-                long[] remoteVersion = parseVersion(tag);
+                String raw = new String(readBytes(new URL(METADATA_URL), JSON_LIMIT, token), StandardCharsets.UTF_8);
+                ReleaseMetadata release = parseMetadata(raw);
+                String tag = release.tag;
                 PackageInfo own = installedPackage(app);
-                long[] currentVersion = parseVersion(own.versionName);
-                if (json.optBoolean("draft") || json.optBoolean("prerelease")) throw new IOException("该版本尚未正式发布");
-                String apkUrl = null, shaUrl = null;
-                JSONArray assets = json.getJSONArray("assets");
-                for (int i = 0; i < assets.length(); i++) {
-                    JSONObject asset = assets.getJSONObject(i);
-                    String name = asset.getString("name");
-                    if (APK.equals(name)) { if (apkUrl != null) throw new IOException("发布文件重复"); apkUrl = asset.getString("browser_download_url"); }
-                    if (SHA.equals(name)) { if (shaUrl != null) throw new IOException("校验文件重复"); shaUrl = asset.getString("browser_download_url"); }
-                }
-                if (compare(remoteVersion, currentVersion) <= 0) {
+                if (compare(parseVersion(tag), parseVersion(own.versionName)) <= 0) {
                     post(token, () -> { end(); showMessage("当前已是最新版本", "当前版本：" + own.versionName + "\n最新发布：" + tag); });
                     return;
                 }
-                if (apkUrl == null || shaUrl == null) throw new IOException("该版本缺少安装包或校验文件");
-                requireAssetUrl(apkUrl, tag, APK);
-                requireAssetUrl(shaUrl, tag, SHA);
-                String notes = json.optString("body", "").trim();
-                if (notes.length() > 1600) notes = notes.substring(0, 1600) + "…";
-                final String finalApk = apkUrl, finalSha = shaUrl, finalNotes = notes;
+                final String finalApk = release.apkUrl, finalSha = release.shaUrl, finalNotes = release.notes;
                 post(token, () -> {
                     end();
                     Activity a = liveActivity(); if (a == null) return;
@@ -111,6 +95,37 @@ public final class UpdateManager {
                 });
             } catch (Exception e) { fail(token, "检查更新失败", e); }
         });
+    }
+
+    static final class ReleaseMetadata {
+        final String tag, apkUrl, shaUrl, notes;
+        ReleaseMetadata(String tag, String apkUrl, String shaUrl, String notes) {
+            this.tag = tag; this.apkUrl = apkUrl; this.shaUrl = shaUrl; this.notes = notes;
+        }
+    }
+
+    /** Parse an untrusted fixed release asset without accepting arbitrary source URLs. */
+    static ReleaseMetadata parseMetadata(String raw) throws Exception {
+        JSONObject json = new JSONObject(raw);
+        String tag = json.getString("tag_name");
+        parseVersion(tag);
+        Object draft = json.get("draft"), prerelease = json.get("prerelease");
+        if (!(draft instanceof Boolean) || !(prerelease instanceof Boolean)) throw new IOException("发布状态格式无效");
+        if ((Boolean) draft || (Boolean) prerelease) throw new IOException("该版本尚未正式发布");
+        String apkUrl = null, shaUrl = null;
+        JSONArray assets = json.getJSONArray("assets");
+        for (int i = 0; i < assets.length(); i++) {
+            JSONObject asset = assets.getJSONObject(i);
+            String name = asset.getString("name");
+            if (APK.equals(name)) { if (apkUrl != null) throw new IOException("发布文件重复"); apkUrl = asset.getString("browser_download_url"); }
+            if (SHA.equals(name)) { if (shaUrl != null) throw new IOException("校验文件重复"); shaUrl = asset.getString("browser_download_url"); }
+        }
+        if (apkUrl == null || shaUrl == null) throw new IOException("该版本缺少安装包或校验文件");
+        requireAssetUrl(apkUrl, tag, APK);
+        requireAssetUrl(shaUrl, tag, SHA);
+        String notes = json.optString("body", "").trim();
+        if (notes.length() > 1600) notes = notes.substring(0, 1600) + "…";
+        return new ReleaseMetadata(tag, apkUrl, shaUrl, notes);
     }
 
     private void download(String apkUrl, String shaUrl, String tag) {
@@ -277,7 +292,7 @@ public final class UpdateManager {
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(12000); conn.setReadTimeout(15000); conn.setInstanceFollowRedirects(false);
             conn.setRequestProperty("User-Agent", "RiderSlideAssist-Update");
-            conn.setRequestProperty("Accept", "api.github.com".equals(url.getHost()) ? "application/vnd.github+json" : "application/octet-stream");
+            conn.setRequestProperty("Accept", "application/octet-stream");
             try {
                 int status = conn.getResponseCode();
                 if (status >= 300 && status < 400) {
@@ -285,7 +300,7 @@ public final class UpdateManager {
                     if (location == null || redirects == 5) throw new IOException("更新下载跳转无效");
                     url = new URL(url, location); continue;
                 }
-                if (status != 200) throw new IOException(status == 404 ? "尚未找到正式发布版本" : "服务器返回错误（" + status + "）");
+                if (status != 200) throw new IOException(status == 404 ? "未找到更新文件，请稍后重试" : "服务器返回错误（" + status + "）");
                 long length = conn.getContentLengthLong();
                 if (length > limit) throw new IOException("更新文件超过大小限制");
                 try (InputStream in = conn.getInputStream()) {
@@ -304,7 +319,7 @@ public final class UpdateManager {
     static void requireHost(URL u) throws IOException {
         String h = u.getHost().toLowerCase(Locale.ROOT);
         if (!"https".equalsIgnoreCase(u.getProtocol()) || u.getUserInfo() != null || u.getRef() != null ||
-                (u.getPort() != -1 && u.getPort() != 443) || !(h.equals("api.github.com") || h.equals("github.com") ||
+                (u.getPort() != -1 && u.getPort() != 443) || !(h.equals("github.com") ||
                 h.equals("objects.githubusercontent.com") || h.equals("release-assets.githubusercontent.com") || h.equals("github-releases.githubusercontent.com")))
             throw new IOException("不允许的更新地址");
     }
