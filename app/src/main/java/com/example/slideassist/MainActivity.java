@@ -18,6 +18,7 @@ import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -82,6 +83,49 @@ public final class MainActivity extends Activity {
         reactionTest.setOnClickListener(v -> startActivity(new Intent(this, ReactionTestActivity.class)));
         addTop(page, reactionTest, 8);
         addTop(page, text("可手动拖动测速、查看轨迹慢放和逐点数据；只有点击开始记录后才采集本工具内的数据。", 13, MUTED, false), 6);
+
+        LinearLayout bubbleSettings = card();
+        addTop(page, bubbleSettings, 16);
+        Button bubbleMenu = button("浮标设置 ▾", false);
+        bubbleSettings.addView(bubbleMenu, new LinearLayout.LayoutParams(-1, dp(48)));
+        LinearLayout bubbleOptions = new LinearLayout(this);
+        bubbleOptions.setOrientation(LinearLayout.VERTICAL);
+        bubbleOptions.setVisibility(View.GONE);
+        addTop(bubbleSettings, bubbleOptions, 4);
+        int opacity = BubbleSettings.normalizeOpacityPercent(getSharedPreferences("assist_settings", MODE_PRIVATE)
+                .getInt(BubbleSettings.OPACITY_PREF, BubbleSettings.DEFAULT_OPACITY_PERCENT));
+        TextView opacityLabel = text("浮标可见度：" + opacity + "% · 越低越透明", 14, INK, true);
+        addTop(bubbleOptions, opacityLabel, 4);
+        SeekBar opacityControl = new SeekBar(this);
+        opacityControl.setTag("bubble_opacity");
+        opacityControl.setMax(BubbleSettings.MAX_OPACITY_PERCENT - BubbleSettings.MIN_OPACITY_PERCENT);
+        opacityControl.setProgress(opacity - BubbleSettings.MIN_OPACITY_PERCENT);
+        opacityControl.setContentDescription("浮标可见度" + opacity + "%，10%很淡，100%完全不透明");
+        opacityControl.setMinimumHeight(dp(48));
+        addTop(bubbleOptions, opacityControl, 4);
+        LinearLayout opacityLimits = row();
+        opacityLimits.addView(text("10% 很淡", 12, MUTED, false), new LinearLayout.LayoutParams(0, -2, 1));
+        TextView opacityMax = text("100% 完全不透明", 12, MUTED, false);
+        opacityMax.setGravity(Gravity.END);
+        opacityLimits.addView(opacityMax, new LinearLayout.LayoutParams(0, -2, 1));
+        addTop(bubbleOptions, opacityLimits, 0);
+        addTop(bubbleOptions, text("绿色电话下方出现计时表示辅助已开启，无计时表示关闭。连续轻点三次切换；拖动松手吸附左右边缘。可见度会保留，模拟页与真实辅助页共用。", 13, MUTED, false), 8);
+        bubbleMenu.setOnClickListener(v -> {
+            boolean show = bubbleOptions.getVisibility() != View.VISIBLE;
+            bubbleOptions.setVisibility(show ? View.VISIBLE : View.GONE);
+            bubbleMenu.setText(show ? "浮标设置 ▴" : "浮标设置 ▾");
+        });
+        opacityControl.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seek, int progress, boolean fromUser) {
+                int value = BubbleSettings.normalizeOpacityPercent(progress + BubbleSettings.MIN_OPACITY_PERCENT);
+                getSharedPreferences("assist_settings", MODE_PRIVATE).edit().putInt(BubbleSettings.OPACITY_PREF, value).apply();
+                opacityLabel.setText("浮标可见度：" + value + "% · 越低越透明");
+                seek.setContentDescription("浮标可见度" + value + "%，10%很淡，100%完全不透明");
+                if (demoBubble != null) demoBubble.setOpacityPercent(value);
+            }
+            @Override public void onStartTrackingTouch(SeekBar seek) { }
+            @Override public void onStopTrackingTouch(SeekBar seek) { }
+        });
 
         LinearLayout setup = card();
         addTop(page, setup, 20);
@@ -170,7 +214,7 @@ public final class MainActivity extends Activity {
         });
         addTop(setupDetails, text("真实页面辅助的时长设置。模拟订单下方可独立选择练习时长；手动测速不使用自动时长。", 14, MUTED, false), 4);
         addTop(setupDetails, text("音量键快捷开关", 15, INK, true), 14);
-        TextView shortcut = text("先开启无障碍服务。在骑士页面，同时短按音量＋和音量－，开启或关闭辅助。也可连续轻点贴边状态球三次切换，或上下拖动状态球。单击、双击不切换。开启后对齐完整橙色滑条和左侧白色箭头块；只有从白色块内按下才触发，并从最初按下的位置向右拖。每次滑动结束会自动关闭。两键全部松开后才能再次切换。\n正常音量可能变化；请勿长按，以免触发系统快捷方式。若手机无法接收组合键，可使用状态球或下方按钮。", 14, MUTED, false);
+        TextView shortcut = text("先开启无障碍服务。在骑士页面，同时短按音量＋和音量－，开启或关闭辅助。也可连续轻点贴边电话浮标三次切换，可拖动电话浮标并吸附左右边缘。单击、双击不切换。开启后对齐完整橙色滑条和左侧白色箭头块；只有从白色块内按下才触发，并从最初按下的位置向右拖。每次滑动结束会自动关闭。两键全部松开后才能再次切换。\n正常音量可能变化；请勿长按，以免触发系统快捷方式。若手机无法接收组合键，可使用电话浮标或下方按钮。", 14, MUTED, false);
         shortcut.setLineSpacing(dp(2), 1f);
         addTop(setupDetails, shortcut, 6);
         TextView setupHint = text("启动辅助会打开京东秒送骑士。人工移动、调整浮层对齐完整抢单条，并核对白色触发框与左侧箭头块重合。只有白色块内起手才触发；橙色其余位置或外起手移入不触发。浮层会遮挡其下触摸，滚动列表请从浮层外起手。每次触发、离开应用或滚动列表后真实辅助会关闭，需重新开启和对齐。", 14, MUTED, false);
@@ -244,31 +288,50 @@ public final class MainActivity extends Activity {
         };
         for (int i = 0; i < orders.length; i++) addOrder(page, orders[i], i + 1);
         demoBubble = new StatusBubbleView(this);
-        FrameLayout.LayoutParams bubblePosition = new FrameLayout.LayoutParams(dp(84), dp(48), Gravity.END | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams bubblePosition = new FrameLayout.LayoutParams(dp(StatusBubbleView.WIDTH_DP),
+                dp(StatusBubbleView.HEIGHT_DP), Gravity.END | Gravity.CENTER_VERTICAL);
         content.addView(demoBubble, bubblePosition);
+        demoBubble.setOpacityPercent(opacity);
         demoBubble.setActive(demoAssistEnabled);
         demoBubble.setOnClickListener(v -> setDemoAssistEnabled(!demoAssistEnabled));
         demoBubble.setOnTouchListener(new View.OnTouchListener() {
-            float startX, startY, initialY;
-            boolean dragged;
+            float startX, startY, initialX, initialY;
+            boolean dragged, invalid;
+            void snap(View view) {
+                view.setX(BubblePlacement.snapX(Math.round(view.getX()), content.getWidth(), view.getWidth()));
+            }
             @Override public boolean onTouch(View view, MotionEvent event) {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                    startX = event.getRawX(); startY = event.getRawY(); initialY = view.getY(); dragged = false; return true;
+                    startX = event.getRawX(); startY = event.getRawY();
+                    initialX = view.getX(); initialY = view.getY(); dragged = invalid = false; return true;
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                    if (invalid) return true;
                     float delta = event.getRawY() - startY;
                     if (Math.hypot(event.getRawX() - startX, delta) > ViewConfiguration.get(MainActivity.this).getScaledTouchSlop()) {
                         dragged = true;
                         demoBubble.resetTapSequence();
                     }
-                    if (dragged) view.setY(Math.max(dp(48), Math.min(content.getHeight() - dp(80), initialY + delta)));
+                    if (dragged) {
+                        view.setX(BubblePlacement.clampX(Math.round(initialX + event.getRawX() - startX),
+                                content.getWidth(), view.getWidth()));
+                        view.setY(Math.max(dp(48), Math.min(content.getHeight() - view.getHeight() - dp(24), initialY + delta)));
+                    }
                     return true;
                 }
-                if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                    dragged = true;
+                if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN
+                        || event.getActionMasked() == MotionEvent.ACTION_POINTER_UP) {
+                    invalid = true;
                     demoBubble.resetTapSequence();
+                    return true;
                 }
-                if (event.getActionMasked() == MotionEvent.ACTION_UP && !dragged) view.performClick();
+                if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                    invalid = true; demoBubble.resetTapSequence(); snap(view); return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                    snap(view);
+                    if (!dragged && !invalid) view.performClick();
+                }
                 return true;
             }
         });
@@ -312,7 +375,7 @@ public final class MainActivity extends Activity {
     private void updateDemoHint(String mode) {
         if (demoHint == null) return;
         if (!demoAssistEnabled) {
-            demoHint.setText("练习辅助已关闭。连续轻点贴边状态球三次，或同时短按音量加减键开启；关闭时仍可从左侧白色手柄手动拖动。状态球仅控制本页练习，不操作真实订单。");
+            demoHint.setText("练习辅助已关闭。连续轻点贴边电话浮标三次，或同时短按音量加减键开启；关闭时仍可从左侧白色手柄手动拖动。电话浮标仅控制本页练习，不操作真实订单。");
             return;
         }
         String instruction = "gestures".equals(mode)
@@ -320,7 +383,7 @@ public final class MainActivity extends Activity {
                 : "release".equals(mode)
                 ? "以下均为虚构订单，不会产生真实接单。在左侧白色箭头块内按下，最初的手指抬起时即模拟抢单；起点使用最初按下坐标。"
                 : "以下均为虚构订单，不会产生真实接单。手指一按下左侧白色箭头块就从该位置向右辅助拖动；橙色其他位置不触发。";
-        demoHint.setText("练习辅助已开启。连续轻点贴边状态球三次可关闭，按住可上下移动。每次结束并抬手后0.2秒自动复位，可直接再练；次数会保留。状态球仅控制本页练习。\n" + instruction);
+        demoHint.setText("练习辅助已开启。连续轻点贴边电话浮标三次可关闭，拖动后吸附左右边缘。每次结束并抬手后0.2秒自动复位，可直接再练；次数会保留。电话浮标仅控制本页练习。\n" + instruction);
     }
 
     void setDemoAssistEnabled(boolean enabled) {

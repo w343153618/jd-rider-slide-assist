@@ -28,13 +28,15 @@ public final class GestureInstrumentation extends Instrumentation {
     private final java.util.Map<DemoSliderView,Long> completionBaseline = new java.util.HashMap<>();
     private boolean serviceTest, emulatorHardware, volumeTest, bubbleTest, updateTest, publishTest;
     private String pendingTest;
-    private boolean lifecycleTest, v14Test, v15Sliders, v15Main, v15Reaction, unbufferedFixture;
+    private boolean lifecycleTest, v14Test, v15Sliders, v15Main, v15Reaction, unbufferedFixture, v16Bubble, v16ServiceBubble;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); unbufferedFixture = arguments.getString("unbuffered") != null; v15Main = arguments.getString("v15main") != null; v15Reaction = arguments.getString("v15reaction") != null; v15Sliders = arguments.getString("v15sliders") != null; v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); v16ServiceBubble = arguments.getString("v16servicebubble") != null; v16Bubble = arguments.getString("v16bubble") != null; unbufferedFixture = arguments.getString("unbuffered") != null; v15Main = arguments.getString("v15main") != null; v15Reaction = arguments.getString("v15reaction") != null; v15Sliders = arguments.getString("v15sliders") != null; v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (v16ServiceBubble) { V16ServiceBubbleChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
+            if (v16Bubble) { V16BubbleChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
             if (v15Main) { V15MainChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
             if (v15Reaction) { V15ReactionChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
             if (v15Sliders) { V15SliderChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }

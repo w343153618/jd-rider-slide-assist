@@ -50,7 +50,8 @@ public class AssistService extends AccessibilityService {
     private View touchArea;
     private StatusBubbleView statusBubble;
     private WindowManager.LayoutParams bubbleLayout;
-    private int bubbleY = -1;
+    private int bubbleX = -1, bubbleY = -1;
+    private boolean bubbleTouchActive;
     private boolean serviceStopping;
     private boolean gestureInFlight;
     private int gestureInFlightToken = -1;
@@ -267,6 +268,8 @@ public class AssistService extends AccessibilityService {
         }
         if (statusBubble == null) showStatusBubble();
         if (statusBubble != null) {
+            statusBubble.setOpacityPercent(getSharedPreferences(PREFS, MODE_PRIVATE)
+                    .getInt(BubbleSettings.OPACITY_PREF, BubbleSettings.DEFAULT_OPACITY_PERCENT));
             statusBubble.setActive(armed);
             avoidBubbleOverlap();
         }
@@ -275,16 +278,22 @@ public class AssistService extends AccessibilityService {
     private void showStatusBubble() {
         if (statusBubble != null || serviceStopping) return;
         int[] screen = screenSize();
+        int bubbleWidth = dp(StatusBubbleView.WIDTH_DP);
+        if (bubbleX < 0) bubbleX = Math.max(0, screen[0] - bubbleWidth);
+        bubbleX = BubblePlacement.snapX(bubbleX, screen[0], bubbleWidth);
         if (bubbleY < 0) bubbleY = screen[1] / 3;
         bubbleY = clampBubbleY(bubbleY);
         statusBubble = new StatusBubbleView(this);
+        statusBubble.setOpacityPercent(getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getInt(BubbleSettings.OPACITY_PREF, BubbleSettings.DEFAULT_OPACITY_PERCENT));
         statusBubble.setActive(armed);
-        bubbleLayout = new WindowManager.LayoutParams(dp(80), dp(48),
+        bubbleLayout = new WindowManager.LayoutParams(bubbleWidth, dp(StatusBubbleView.HEIGHT_DP),
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
-        bubbleLayout.gravity = Gravity.TOP | Gravity.RIGHT;
-        bubbleLayout.x = 0;
+        // Physical X coordinates make both edge positions independent of layout direction.
+        bubbleLayout.gravity = Gravity.TOP | Gravity.LEFT;
+        bubbleLayout.x = bubbleX;
         bubbleLayout.y = bubbleY;
         statusBubble.setOnClickListener(v -> toggleByStatusBubble());
         statusBubble.setOnTouchListener(new BubbleTouch());
@@ -294,25 +303,32 @@ public class AssistService extends AccessibilityService {
 
     private int clampBubbleY(int value) {
         int screenHeight = screenSize()[1];
-        int top = Math.min(dp(30), Math.max(0, screenHeight - dp(48)));
-        int bottom = Math.max(top, screenHeight - dp(48) - dp(72));
+        int top = Math.min(dp(30), Math.max(0, screenHeight - dp(StatusBubbleView.HEIGHT_DP)));
+        int bottom = Math.max(top, screenHeight - dp(StatusBubbleView.HEIGHT_DP) - dp(72));
         return Math.max(top, Math.min(bottom, value));
     }
 
     private final class BubbleTouch implements View.OnTouchListener {
         private float downX, downY;
-        private int originalY;
-        private boolean moved;
+        private int originalX, originalY;
+        private boolean moved, invalid;
         @Override public boolean onTouch(View view, MotionEvent event) {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = event.getRawX(); downY = event.getRawY();
-                    originalY = bubbleY; moved = false; return true;
+                    originalX = bubbleX; originalY = bubbleY;
+                    moved = invalid = false; bubbleTouchActive = true; return true;
                 case MotionEvent.ACTION_POINTER_DOWN:
-                    moved = true;
+                case MotionEvent.ACTION_POINTER_UP:
+                    invalid = true;
                     if (statusBubble != null) statusBubble.resetTapSequence();
                     return true;
                 case MotionEvent.ACTION_MOVE:
+                    if (event.getPointerCount() != 1) {
+                        invalid = true;
+                        if (statusBubble != null) statusBubble.resetTapSequence();
+                    }
+                    if (invalid) return true;
                     float dx = event.getRawX() - downX, dy = event.getRawY() - downY;
                     int slop = ViewConfiguration.get(AssistService.this).getScaledTouchSlop();
                     if (dx * dx + dy * dy > slop * slop) {
@@ -320,23 +336,40 @@ public class AssistService extends AccessibilityService {
                         if (statusBubble != null) statusBubble.resetTapSequence();
                     }
                     if (moved && statusBubble != null && bubbleLayout != null) {
+                        bubbleX = BubblePlacement.clampX(originalX + Math.round(dx), screenSize()[0], bubbleLayout.width);
                         bubbleY = clampBubbleY(originalY + Math.round(dy));
+                        bubbleLayout.x = bubbleX;
                         bubbleLayout.y = bubbleY;
                         try { windows.updateViewLayout(statusBubble, bubbleLayout); }
                         catch (RuntimeException e) { removeStatusBubble(); }
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
-                    if (moved) avoidBubbleOverlap(); else view.performClick();
+                    bubbleTouchActive = false;
+                    snapBubbleToEdge();
+                    if (moved || invalid) {
+                        if (statusBubble != null) statusBubble.resetTapSequence();
+                        avoidBubbleOverlap();
+                    } else view.performClick();
                     return true;
                 case MotionEvent.ACTION_CANCEL:
-                    moved = true;
+                    invalid = true; bubbleTouchActive = false;
                     if (statusBubble != null) statusBubble.resetTapSequence();
+                    snapBubbleToEdge(); avoidBubbleOverlap();
                     return true;
                 default:
                     return true;
             }
         }
+    }
+
+    private void snapBubbleToEdge() {
+        if (statusBubble == null || bubbleLayout == null) return;
+        bubbleX = BubblePlacement.snapX(bubbleX, screenSize()[0], bubbleLayout.width);
+        bubbleY = clampBubbleY(bubbleY);
+        bubbleLayout.x = bubbleX; bubbleLayout.y = bubbleY;
+        try { windows.updateViewLayout(statusBubble, bubbleLayout); }
+        catch (RuntimeException e) { removeStatusBubble(); }
     }
 
     private void toggleByStatusBubble() {
@@ -355,15 +388,15 @@ public class AssistService extends AccessibilityService {
 
     /** Keep the edge control out of the active touch strip when possible. */
     private void avoidBubbleOverlap() {
-        if (statusBubble == null || bubbleLayout == null || overlay == null || layout == null) return;
-        int screenWidth = screenSize()[0];
-        int bubbleLeft = screenWidth - bubbleLayout.width;
+        if (bubbleTouchActive || statusBubble == null || bubbleLayout == null || overlay == null || layout == null) return;
+        int bubbleHeight = bubbleLayout.height;
         int stripTop = layout.y + dp(38);
         int stripBottom = stripTop + areaHeight;
-        if (layout.x + width <= bubbleLeft || bubbleY >= stripBottom || bubbleY + dp(48) <= stripTop) return;
-        int above = clampBubbleY(stripTop - dp(48));
+        if (!BubblePlacement.overlapsHorizontal(bubbleLayout.x, bubbleLayout.width, layout.x, width)
+                || bubbleY >= stripBottom || bubbleY + bubbleHeight <= stripTop) return;
+        int above = clampBubbleY(stripTop - bubbleHeight);
         int below = clampBubbleY(stripBottom);
-        int destination = above + dp(48) <= stripTop ? above : below;
+        int destination = above + bubbleHeight <= stripTop ? above : below;
         if (destination == bubbleY) return;
         bubbleY = destination;
         bubbleLayout.y = bubbleY;
@@ -372,6 +405,9 @@ public class AssistService extends AccessibilityService {
     }
 
     private boolean removeStatusBubble() {
+        if (bubbleLayout != null)
+            bubbleX = BubblePlacement.snapX(bubbleX, screenSize()[0], bubbleLayout.width);
+        bubbleTouchActive = false;
         if (statusBubble == null) return true;
         try { windows.removeViewImmediate(statusBubble); }
         catch (RuntimeException e) { if (statusBubble.isAttachedToWindow()) return false; }
