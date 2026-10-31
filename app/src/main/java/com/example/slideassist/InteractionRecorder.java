@@ -35,7 +35,8 @@ public final class InteractionRecorder {
     public static Trace begin(String kind, long eventTimeMillis, long receivedUptimeMillis, float density) {
         synchronized (LOCK) {
             if (!recording) return null;
-            if (!"manual".equals(kind) && !"demo_assist".equals(kind) && !"service_assist".equals(kind))
+            if (!"manual".equals(kind) && !"reaction_manual".equals(kind)
+                    && !"demo_assist".equals(kind) && !"service_assist".equals(kind))
                 throw new IllegalArgumentException("Unknown measurement kind");
             if (eventTimeMillis < 0 || receivedUptimeMillis < 0 || !Float.isFinite(density) || density <= 0)
                 throw new IllegalArgumentException("Invalid measurement clock or density");
@@ -86,6 +87,8 @@ public final class InteractionRecorder {
         private Trace(String kind, long down, long received, float density) {
             this.kind = kind; downEventTimeMillis = down; receivedUptimeMillis = received; this.density = density;
         }
+        /** Detached bounded copy for an individual practice attempt, also valid after it finishes. */
+        public TraceSnapshot snapshot() { synchronized (LOCK) { return new TraceSnapshot(this); } }
         public void add(Sample sample) {
             synchronized (LOCK) {
                 if (!active || !recording || sample == null) return;

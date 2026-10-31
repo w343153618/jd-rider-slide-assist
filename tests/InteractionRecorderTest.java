@@ -8,7 +8,20 @@ public final class InteractionRecorderTest {
         statisticalMath();
         rawActionsAndMissingValues();
         stageAndConcurrentSnapshotSafety();
+        reactionTraceIsDetachedAndExcludedFromManualRanking();
         System.out.println("InteractionRecorderTest passed");
+    }
+
+    private static void reactionTraceIsDetachedAndExcludedFromManualRanking() {
+        InteractionRecorder.clear(); InteractionRecorder.start();
+        InteractionRecorder.Trace reaction = InteractionRecorder.begin("reaction_manual", 100, 103, 1);
+        reaction.add(point(100, 103, 0, 0));
+        InteractionRecorder.TraceSnapshot detached = reaction.snapshot();
+        reaction.add(point(110, 112, 30, 0));
+        reaction.mark("target", 110); reaction.finish("success", 120);
+        check(detached.samples.size() == 1 && "recording".equals(detached.outcome), "individual snapshot is detached");
+        expectImmutable(() -> detached.samples.clear());
+        check(ReportStats.of(InteractionRecorder.snapshot()).manualAttemptCount == 0, "reaction timing excluded from standalone hand ranking");
     }
 
     private static void optInAndFrozenSnapshots() {
