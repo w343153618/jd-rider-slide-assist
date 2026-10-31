@@ -45,8 +45,8 @@ public final class V18EdgeCollapseChecks {
             long epoch=elapsed(i,bubble);
             drag(i,bubble,.22f,false);
             // This literal geometry assertion intentionally precedes the new reflective API:
-            // the old implementation compiles and fails because it remains a full64dp square.
-            ui(i,()->shape(bubble,4,64,0));
+            // the previous implementation compiles and fails because its edge handle is only4dp wide.
+            ui(i,()->shape(bubble,20,64,0));
             check(collapsed(bubble),"release must enter collapsed state");
             check(active(bubble)==initial,"dragging must preserve assistance state");
             retained(i,bubble,epoch);
@@ -55,23 +55,23 @@ public final class V18EdgeCollapseChecks {
             check(elapsed(i,bubble)>=hiddenStart+1000,"active elapsed clock must keep advancing while the strip is collapsed");
             expand(i,bubble,64,0);
             tripleIsolation(i,bubble);
-            drag(i,bubble,.78f,false);ui(i,()->shape(bubble,4,64,1));
+            drag(i,bubble,.78f,false);ui(i,()->shape(bubble,20,64,1));
             SeekBar size=openSizeMenu(i,a);
             for(int value:new int[]{32,120}){
                 long before=elapsed(i,bubble);
                 ui(i,()->size.setProgress(value-32));i.waitForIdleSync();
-                ui(i,()->shape(bubble,4,value,1));
+                ui(i,()->shape(bubble,20,value,1));
                 check(collapsed(bubble),"size changes must preserve collapse");retained(i,bubble,before);
                 check(prefs.getInt(SIZE_PREF,-1)==value,"size selection must persist while collapsed");
                 expand(i,bubble,value,1);tripleIsolation(i,bubble);
-                drag(i,bubble,.78f,false);ui(i,()->shape(bubble,4,value,1));
+                drag(i,bubble,.78f,false);ui(i,()->shape(bubble,20,value,1));
             }
             expand(i,bubble,120,1);
             interruptions(i,bubble,120,false);
-            drag(i,bubble,.22f,false);ui(i,()->shape(bubble,4,120,0));
+            drag(i,bubble,.22f,false);ui(i,()->shape(bubble,20,120,0));
             interruptions(i,bubble,120,true);
             check(prefs.getInt(OPACITY_PREF,-1)==55,"collapse/expansion must not change opacity preference");
-            result.putString("result","PASS native Main edge collapse: initial64dp square,4dp left/right release strips and scoped Back exclusion, first tap expands without toggle or triple count,32/120dp size preservation, same-view active clock and55percent opacity, cancelled drags retain prior state and multiple pointers cannot toggle/expand/collapse; controller events only");
+            result.putString("result","PASS native Main edge collapse: initial64dp square,20dp left/right release strips and scoped Back exclusion, first tap expands without toggle or triple count,32/120dp size preservation, same-view active clock and55percent opacity, cancelled drags retain prior state and multiple pointers cannot toggle/expand/collapse; controller events only");
         } finally {
             try {if(opened[0]!=null)ui(i,opened[0]::finish);}
             finally {
@@ -115,28 +115,28 @@ public final class V18EdgeCollapseChecks {
                         "status window must disable the system position animation so edge visual/touch bounds settle together");
             });
             serviceDrag(i,service,bubble,.22f,false);
-            serviceShape(i,service,bubble,4,64,0);retained(i,bubble,before);
+            serviceShape(i,service,bubble,20,64,0);retained(i,bubble,before);
             tap(i,bubble);settle(i,bubble);
             serviceShape(i,service,bubble,64,64,0);
             check(AssistService.isAssistArmed(),"first service strip tap only expands");
             tripleIsolation(i,bubble);
-            serviceDrag(i,service,bubble,.78f,false);serviceShape(i,service,bubble,4,64,1);
+            serviceDrag(i,service,bubble,.78f,false);serviceShape(i,service,bubble,20,64,1);
             for(int height:new int[]{32,120}){
                 long epoch=elapsed(i,bubble);
                 prefs.edit().putInt(SIZE_PREF,height).commit();
                 ui(i,()->invoke(service,"updateStatusBubble"));settle(i,bubble);
-                serviceShape(i,service,bubble,4,height,1);retained(i,bubble,epoch);
+                serviceShape(i,service,bubble,20,height,1);retained(i,bubble,epoch);
                 check(status(service)==bubble,"service resizing must reuse the same status View");
             }
-            serviceDrag(i,service,bubble,.22f,true);serviceShape(i,service,bubble,4,120,0);
-            tap(i,bubble);settle(i,bubble);serviceShape(i,service,bubble,120,120,0);
-            serviceDrag(i,service,bubble,.78f,true);serviceShape(i,service,bubble,120,120,1);
+            serviceDrag(i,service,bubble,.22f,true);serviceShape(i,service,bubble,20,120,1);
+            tap(i,bubble);settle(i,bubble);serviceShape(i,service,bubble,120,120,1);
+            serviceDrag(i,service,bubble,.78f,true);serviceShape(i,service,bubble,120,120,-1);
             check(AssistService.isAssistArmed(),"cancel and expand must preserve service ON state");
             check(gestureStatus.equals(AssistService.getLastGestureStatus())
                             && token==(Integer)field(service,"lastGestureToken")
                             && !(Boolean)field(service,"injecting") && !(Boolean)field(service,"gestureInFlight"),
                     "status-control actions must never dispatch an order gesture");
-            result.putString("result","PASS native service-window edge collapse: actual4dp WindowManager and measured View widths at both edges, scoped Back exclusion, first strip tap expands and isolates triple sequence,32/120dp collapsed resizing reuses View/clock/opacity, cancellation preserves expanded/collapsed state, no order gesture; direct controller events only");
+            result.putString("result","PASS native service-window edge collapse: actual20dp WindowManager and measured View widths at both edges, scoped Back exclusion, first strip tap expands and isolates triple sequence,32/120dp collapsed resizing reuses View/clock/opacity, cancellation preserves expanded/collapsed state, no order gesture; direct controller events only");
         }finally{
             try{ui(i,AssistService::stopAssist);}
             finally{
@@ -172,15 +172,17 @@ public final class V18EdgeCollapseChecks {
     }
     private static void interruptions(Instrumentation i,StatusBubbleView bubble,int size,boolean wasCollapsed){
         boolean before=active(bubble);
+        int[] originalSide={0};ui(i,()->originalSide[0]=bubble.getX()<((View)bubble.getParent()).getWidth()/2f?0:1);
+        int expectedSide=wasCollapsed?originalSide[0]:-1;
         drag(i,bubble,.78f,true);
-        ui(i,()->shape(bubble,wasCollapsed?4:size,size,1));
+        ui(i,()->shape(bubble,wasCollapsed?20:size,size,expectedSide));
         check(collapsed(bubble)==wasCollapsed && active(bubble)==before,"cancel must snap while preserving prior presentation and assistance state");
         float[] p=center(i,bubble);long down=SystemClock.uptimeMillis();
         event(i,bubble,down,MotionEvent.ACTION_DOWN,p[0],p[1]);
         multi(i,bubble,down,MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),p[0],p[1]);
         multi(i,bubble,down,MotionEvent.ACTION_POINTER_UP|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT),p[0],p[1]);
         event(i,bubble,down,MotionEvent.ACTION_UP,p[0],p[1]);i.waitForIdleSync();
-        ui(i,()->shape(bubble,wasCollapsed?4:size,size,1));
+        ui(i,()->shape(bubble,wasCollapsed?20:size,size,expectedSide));
         check(collapsed(bubble)==wasCollapsed && active(bubble)==before,"multi-pointer input must not expand/collapse or toggle");
     }
     private static SeekBar openSizeMenu(Instrumentation i,Activity a){
@@ -204,8 +206,16 @@ public final class V18EdgeCollapseChecks {
         });
     }
     private static void serviceDrag(Instrumentation i,Object service,StatusBubbleView bubble,float fraction,boolean cancel){
+        if(!cancel){
+            WindowManager.LayoutParams lp=(WindowManager.LayoutParams)field(service,"bubbleLayout");int[] screen=(int[])invoke(service,"screenSize");
+            float threshold=24*bubble.getResources().getDisplayMetrics().density;
+            if(fraction<.5f?lp.x<=threshold:screen[0]-lp.x-lp.width<=threshold){
+                float[] from=center(i,bubble);long down=SystemClock.uptimeMillis();
+                event(i,bubble,down,MotionEvent.ACTION_DOWN,from[0],from[1]);event(i,bubble,down,MotionEvent.ACTION_MOVE,screen[0]/2f,from[1]);event(i,bubble,down,MotionEvent.ACTION_UP,screen[0]/2f,from[1]);settle(i,bubble);
+            }
+        }
         float[] start=center(i,bubble),target=new float[2];
-        ui(i,()->{int[] screen=(int[])invoke(service,"screenSize");target[0]=screen[0]*fraction;target[1]=screen[1]*.55f;});
+        ui(i,()->{int[] screen=(int[])invoke(service,"screenSize");float size=bubble.getHeight(),edge=4*bubble.getResources().getDisplayMetrics().density;target[0]=cancel?screen[0]*fraction:fraction<.5f?size/2+edge:screen[0]-size/2-edge;target[1]=screen[1]*.55f;});
         long down=SystemClock.uptimeMillis();event(i,bubble,down,MotionEvent.ACTION_DOWN,start[0],start[1]);
         event(i,bubble,down,MotionEvent.ACTION_MOVE,target[0],target[1]);
         event(i,bubble,down,cancel?MotionEvent.ACTION_CANCEL:MotionEvent.ACTION_UP,target[0],target[1]);settle(i,bubble);
@@ -215,10 +225,10 @@ public final class V18EdgeCollapseChecks {
             WindowManager.LayoutParams lp=(WindowManager.LayoutParams)field(service,"bubbleLayout");
             int[] screen=(int[])invoke(service,"screenSize");float density=bubble.getResources().getDisplayMetrics().density;
             int w=Math.round(widthDp*density),h=Math.round(heightDp*density);
-            check(status(service)==bubble&&lp.width==w&&lp.height==h&&bubble.getWidth()==w&&bubble.getHeight()==h,"service must use the actual visible4dp window or expanded selected square");
-            check(lp.x==(side==0?0:screen[0]-w)&&lp.y>=0&&lp.y+h<=screen[1],"service visible bounds must dock inside the physical screen");
+            check(status(service)==bubble&&lp.width==w&&lp.height==h&&bubble.getWidth()==w&&bubble.getHeight()==h,"service must use the actual visible20dp window or expanded selected square");
+            check((side<0||lp.x==(side==0?0:screen[0]-w))&&lp.x>=0&&lp.x+w<=screen[0]&&lp.y>=0&&lp.y+h<=screen[1],"service visible bounds must dock inside the physical screen");
             if(Build.VERSION.SDK_INT>=29)check(bubble.getSystemGestureExclusionRects().size()==1&&bubble.getSystemGestureExclusionRects().contains(new Rect(0,0,w,h)),"service Back exclusion must cover only visible bounds");
-            check(collapsed(bubble)==(widthDp==4),"service presentation state must agree with visible window width");
+            check(collapsed(bubble)==(widthDp==20),"service presentation state must agree with visible window width");
         });
     }
     private static void settle(Instrumentation i,View view){
@@ -231,10 +241,16 @@ public final class V18EdgeCollapseChecks {
     private static Object invoke(Object service,String name){try{Method value=AssistService.class.getDeclaredMethod(name);value.setAccessible(true);return value.invoke(service);}catch(ReflectiveOperationException e){throw new AssertionError(e);}}
 
     private static void drag(Instrumentation i,StatusBubbleView bubble,float fraction,boolean cancel) {
+        if(!cancel){
+            boolean[] sameEdge={false};float[] middle=new float[1];
+            ui(i,()->{View parent=(View)bubble.getParent();float threshold=24*bubble.getResources().getDisplayMetrics().density;sameEdge[0]=fraction<.5f?bubble.getX()<=threshold:parent.getWidth()-bubble.getX()-bubble.getWidth()<=threshold;int[] origin=new int[2];parent.getLocationOnScreen(origin);middle[0]=origin[0]+parent.getWidth()/2f;});
+            if(sameEdge[0]){float[] from=center(i,bubble);long down=SystemClock.uptimeMillis();event(i,bubble,down,MotionEvent.ACTION_DOWN,from[0],from[1]);event(i,bubble,down,MotionEvent.ACTION_MOVE,middle[0],from[1]);event(i,bubble,down,MotionEvent.ACTION_UP,middle[0],from[1]);i.waitForIdleSync();}
+        }
         float[] start=center(i,bubble),target=new float[2];
         ui(i,()->{
             View parent=(View)bubble.getParent();int[] origin=new int[2];parent.getLocationOnScreen(origin);
-            target[0]=origin[0]+parent.getWidth()*fraction;target[1]=origin[1]+parent.getHeight()*.6f;
+            float size=bubble.getHeight(),edge=4*bubble.getResources().getDisplayMetrics().density;
+            target[0]=origin[0]+(cancel?parent.getWidth()*fraction:fraction<.5f?size/2+edge:parent.getWidth()-size/2-edge);target[1]=origin[1]+parent.getHeight()*.6f;
         });
         long down=SystemClock.uptimeMillis();
         event(i,bubble,down,MotionEvent.ACTION_DOWN,start[0],start[1]);
@@ -249,7 +265,7 @@ public final class V18EdgeCollapseChecks {
         check(bubble.getWidth()==width && bubble.getHeight()==height,
                 "expected edge control "+widthDp+"x"+heightDp+"dp, received "+bubble.getWidth()/density+"x"+bubble.getHeight()/density);
         View parent=(View)bubble.getParent();
-        near(side==0?0:parent.getWidth()-width,bubble.getX(),"physical dock must use only the visible control width");
+        if(side>=0)near(side==0?0:parent.getWidth()-width,bubble.getX(),"physical dock must use only the visible control width");
         check(bubble.getY()>=0 && bubble.getY()+height<=parent.getHeight()+1,"edge control must remain vertically in its viewport");
         if(Build.VERSION.SDK_INT>=29){
             List<Rect> exclusions=bubble.getSystemGestureExclusionRects();

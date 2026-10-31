@@ -4,7 +4,8 @@ package com.example.slideassist;
 public final class BubbleSettings {
     public static final int MIN_SIZE_DP = 32, DEFAULT_SIZE_DP = 64, MAX_SIZE_DP = 120;
     public static final int WIDTH_DP = DEFAULT_SIZE_DP, HEIGHT_DP = DEFAULT_SIZE_DP;
-    public static final int COLLAPSED_WIDTH_DP = 4;
+    public static final int COLLAPSED_WIDTH_DP = 20;
+    public static final int COLLAPSED_MIN_OPACITY_PERCENT = 35;
     public static final int MIN_OPACITY_PERCENT = 10, DEFAULT_OPACITY_PERCENT = 10, MAX_OPACITY_PERCENT = 100;
     public static final String OPACITY_PREF = "bubble_opacity_percent";
     public static final String SIZE_PREF = "bubble_size_dp";
@@ -14,5 +15,9 @@ public final class BubbleSettings {
     }
     public static int normalizeSizeDp(int value) {
         return Math.max(MIN_SIZE_DP, Math.min(MAX_SIZE_DP, value));
+    }
+    public static int effectiveOpacityPercent(boolean collapsed, int selected) {
+        int value = normalizeOpacityPercent(selected);
+        return collapsed ? Math.max(COLLAPSED_MIN_OPACITY_PERCENT, value) : value;
     }
 }

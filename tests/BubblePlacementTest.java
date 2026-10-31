@@ -30,12 +30,53 @@ public final class BubblePlacementTest {
                 "changing size preserves the physical right edge");
         check(BubblePlacement.dockedX(true, 360, 32) == 0 && BubblePlacement.dockedX(true, 360, 120) == 0,
                 "changing size preserves the physical left edge");
-        check(BubbleSettings.COLLAPSED_WIDTH_DP == 4, "collapsed control exposes only a four dp strip");
+        check(BubbleSettings.COLLAPSED_WIDTH_DP == 20, "collapsed control exposes a grabbable twenty dp handle");
         check(BubblePlacement.dockedX(true, 360, BubbleSettings.COLLAPSED_WIDTH_DP) == 0
-                        && BubblePlacement.dockedX(false, 360, BubbleSettings.COLLAPSED_WIDTH_DP) == 356,
+                        && BubblePlacement.dockedX(false, 360, BubbleSettings.COLLAPSED_WIDTH_DP) == 340,
                 "collapsed strip docks at both physical edges with its actual narrow width");
-        check(!BubblePlacement.overlapsHorizontal(356, BubbleSettings.COLLAPSED_WIDTH_DP, 0, 350),
+        check(!BubblePlacement.overlapsHorizontal(340, BubbleSettings.COLLAPSED_WIDTH_DP, 0, 330),
                 "collapsed strip must not cover the previous full floating square");
+        check(BubbleSettings.effectiveOpacityPercent(true, 10) == 35,
+                "collapsed low-opacity handles remain visible enough to grab");
+        check(BubbleSettings.effectiveOpacityPercent(true, 55) == 55
+                        && BubbleSettings.effectiveOpacityPercent(false, 10) == 10,
+                "collapsed visibility floor must not replace the expanded user preference");
+        check(BubblePlacement.shouldExpandFromEdge(true, 12, 0, 12), "left handle expands at the inward threshold");
+        check(BubblePlacement.shouldExpandFromEdge(false, -12, 0, 12), "right handle expands at the inward threshold");
+        check(!BubblePlacement.shouldExpandFromEdge(true, 11.9f, 0, 12), "inward jitter below threshold does not expand");
+        check(!BubblePlacement.shouldExpandFromEdge(false, 40, 0, 12)
+                        && !BubblePlacement.shouldExpandFromEdge(true, -40, 0, 12), "outward pulls do not expand");
+        check(!BubblePlacement.shouldExpandFromEdge(true, 20, 21, 12)
+                        && !BubblePlacement.shouldExpandFromEdge(false, -20, -21, 12), "vertical drags do not expand");
+        check(!BubblePlacement.shouldExpandFromEdge(true, 20, 20, 12), "an exactly diagonal pull is not inward-dominant");
+        check(!BubblePlacement.shouldExpandFromEdge(true, Float.NaN, 0, 12)
+                        && !BubblePlacement.shouldExpandFromEdge(true, 30, 0, -1), "invalid direction or threshold cannot expand");
+        check(BubblePlacement.collapseSide(0, 360, 64, -20, 0, 12, 8) == 0,
+                "outward left release at the edge collapses left");
+        check(BubblePlacement.collapseSide(296, 360, 64, 20, 0, 12, 8) == 1,
+                "outward right release at the edge collapses right");
+        check(BubblePlacement.collapseSide(12, 360, 64, -9, 0, 12, 8) == 0
+                        && BubblePlacement.collapseSide(13, 360, 64, -20, 0, 12, 8) == -1,
+                "collapse requires the inclusive edge-distance boundary");
+        check(BubblePlacement.collapseSide(0, 360, 64, -8, 0, 12, 8) == -1,
+                "movement must exceed touch slop before folding");
+        check(BubblePlacement.collapseSide(0, 360, 64, -20, 20, 12, 8) == -1
+                        && BubblePlacement.collapseSide(296, 360, 64, 20, 30, 12, 8) == -1,
+                "diagonal and vertical motions do not fold");
+        check(BubblePlacement.collapseSide(0, 360, 64, 20, 0, 12, 8) == -1
+                        && BubblePlacement.collapseSide(296, 360, 64, -20, 0, 12, 8) == -1,
+                "inward pulls do not fold expanded controls");
+        check(BubblePlacement.collapseSide(100, 360, 64, -50, 0, 12, 8) == -1,
+                "an interior floating position does not snap or collapse");
+        check(BubblePlacement.resizedX(0, 360, 64, 120) == 0
+                        && BubblePlacement.resizedX(296, 360, 64, 120) == 240,
+                "resizing an edge-aligned control preserves that edge");
+        check(BubblePlacement.resizedX(100, 360, 64, 120) == 100,
+                "resizing a freely placed control preserves its interior position");
+        check(BubblePlacement.resizedX(270, 360, 64, 120) == 240,
+                "resizing only clamps an interior control when necessary");
+        check(BubblePlacement.resizedX(40, 160, 120, 32) == 128,
+                "narrow-screen right anchors cannot flip to the left on shrink");
         check(!BubblePlacement.overlapsHorizontal(0, 36, 100, 250),
                 "left-docked bubble must not avoid a disjoint strip to its right");
         check(!BubblePlacement.overlapsHorizontal(324, 36, 0, 300),

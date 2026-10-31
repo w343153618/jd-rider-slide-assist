@@ -200,12 +200,16 @@ public final class V16BubbleChecks {
         ui(i,bubble::resetTapSequence);
     }
     private static void dragToEdge(Instrumentation i,StatusBubbleView bubble,float targetFraction,int edge) {
+        boolean[] sameEdge={false};float[] middle={0};
+        ui(i,()->{View parent=(View)bubble.getParent();float threshold=24*bubble.getResources().getDisplayMetrics().density;sameEdge[0]=edge==0?bubble.getX()<=threshold:parent.getWidth()-bubble.getX()-bubble.getWidth()<=threshold;int[] origin=new int[2];parent.getLocationOnScreen(origin);middle[0]=origin[0]+parent.getWidth()/2f;});
+        if(sameEdge[0]){float[] from=center(i,bubble);long down=SystemClock.uptimeMillis();event(i,bubble,down,MotionEvent.ACTION_DOWN,from[0],from[1]);event(i,bubble,down,MotionEvent.ACTION_MOVE,middle[0],from[1]);event(i,bubble,down,MotionEvent.ACTION_UP,middle[0],from[1]);i.waitForIdleSync();}
         ui(i,bubble::resetTapSequence);boolean before=active(bubble);
         tap(i,bubble);SystemClock.sleep(60);tap(i,bubble);
         float[] start=center(i,bubble), target=new float[2];
         ui(i,()->{
             View parent=(View)bubble.getParent();int[] origin=new int[2];parent.getLocationOnScreen(origin);
-            target[0]=origin[0]+parent.getWidth()*targetFraction;
+            float margin=4*bubble.getResources().getDisplayMetrics().density;
+            target[0]=origin[0]+(edge==0?bubble.getWidth()/2f+margin:parent.getWidth()-bubble.getWidth()/2f-margin);
             target[1]=origin[1]+parent.getHeight()*.58f;
         });
         long down=SystemClock.uptimeMillis();event(i,bubble,down,MotionEvent.ACTION_DOWN,start[0],start[1]);
@@ -217,8 +221,8 @@ public final class V16BubbleChecks {
         event(i,bubble,down,MotionEvent.ACTION_UP,target[0],target[1]);i.waitForIdleSync();
         ui(i,()->{
             View parent=(View)bubble.getParent();
-            int strip=Math.round(4*bubble.getResources().getDisplayMetrics().density);
-            check(bubble.getWidth()==strip && bubble.isCollapsed(),"drag release must leave only a4dp visible strip");
+            int strip=Math.round(20*bubble.getResources().getDisplayMetrics().density);
+            check(bubble.getWidth()==strip && bubble.isCollapsed(),"drag release must leave only a20dp visible strip");
             near(edge==0?0:parent.getWidth()-bubble.getWidth(),bubble.getX(),"release must snap to nearest physical side");
             check(bubble.getY()>=0 && bubble.getY()+bubble.getHeight()<=parent.getHeight()+1,"docked bubble must remain vertically on screen");
         });

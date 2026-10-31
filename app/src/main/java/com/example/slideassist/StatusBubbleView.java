@@ -24,6 +24,8 @@ public final class StatusBubbleView extends TextView {
     private final GradientDrawable square = new GradientDrawable();
     private boolean active;
     private boolean collapsed;
+    private boolean dockedLeft;
+    private final Path chevron = new Path();
     private Runnable onExpand;
     private int opacityPercent = DEFAULT_OPACITY_PERCENT;
     private long startedElapsedMillis = -1;
@@ -55,17 +57,22 @@ public final class StatusBubbleView extends TextView {
 
     public void setOpacityPercent(int value) {
         opacityPercent = BubbleSettings.normalizeOpacityPercent(value);
-        setAlpha(opacityPercent / 100f);
+        applyOpacity();
     }
     public int getOpacityPercent() { return opacityPercent; }
+    private void applyOpacity() { setAlpha(BubbleSettings.effectiveOpacityPercent(collapsed, opacityPercent) / 100f); }
 
     public void setCollapsed(boolean value) {
         if (collapsed == value) return;
         collapsed = value; resetTapSequence();
+        applyOpacity();
         updateVisualMetrics(getWidth(), getHeight()); refreshTimer();
     }
     public boolean isCollapsed() { return collapsed; }
     public void setOnExpandListener(Runnable listener) { onExpand = listener; }
+    public void setDockedLeft(boolean value) {
+        if (dockedLeft != value) { dockedLeft = value; invalidate(); }
+    }
 
     public void setActive(boolean active) {
         if (this.active != active) {
@@ -125,10 +132,17 @@ public final class StatusBubbleView extends TextView {
     }
     @Override protected void onDraw(Canvas canvas) {
         if (collapsed) {
-            float inset = getHeight() * .2f;
+            float centerX = getWidth() / 2f, centerY = getHeight() / 2f;
+            float direction = dockedLeft ? 1 : -1;
+            float halfWidth = getWidth() * .18f, halfHeight = Math.min(getHeight() * .16f, getWidth() * .32f);
+            chevron.reset();
+            chevron.moveTo(centerX - direction * halfWidth, centerY - halfHeight);
+            chevron.lineTo(centerX + direction * halfWidth, centerY);
+            chevron.lineTo(centerX - direction * halfWidth, centerY + halfHeight);
             iconPaint.setStyle(Paint.Style.STROKE); iconPaint.setStrokeCap(Paint.Cap.ROUND);
-            iconPaint.setStrokeWidth(getResources().getDisplayMetrics().density);
-            canvas.drawLine(getWidth() / 2f, inset, getWidth() / 2f, getHeight() - inset, iconPaint);
+            iconPaint.setStrokeJoin(Paint.Join.ROUND);
+            iconPaint.setStrokeWidth(2 * getResources().getDisplayMetrics().density);
+            canvas.drawPath(chevron, iconPaint);
             iconPaint.setStyle(Paint.Style.FILL);
             return;
         }

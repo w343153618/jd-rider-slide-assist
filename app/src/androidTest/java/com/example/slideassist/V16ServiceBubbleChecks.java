@@ -185,6 +185,13 @@ public final class V16ServiceBubbleChecks {
     private static void drag(Object service, int destinationCenterX, int destinationCenterY, boolean checkFrozen) throws Exception {
         StatusBubbleView v = status(service); WindowManager.LayoutParams lp = bubbleLayout(service);
         float startX = lp.x + lp.width / 2f, startY = lp.y + lp.height / 2f;
+        int[] screen=(int[])invoke(service,"screenSize");int margin=Math.round(4*v.getResources().getDisplayMetrics().density);
+        int threshold=Math.round(24*v.getResources().getDisplayMetrics().density);
+        if(destinationCenterX<screen[0]/2?lp.x<=threshold:screen[0]-lp.x-lp.width<=threshold){
+            long reposition=SystemClock.uptimeMillis();event(v,reposition,MotionEvent.ACTION_DOWN,startX,startY);event(v,reposition,MotionEvent.ACTION_MOVE,screen[0]/2f,startY);event(v,reposition,MotionEvent.ACTION_UP,screen[0]/2f,startY);
+            lp=bubbleLayout(service);startX=lp.x+lp.width/2f;startY=lp.y+lp.height/2f;
+        }
+        destinationCenterX=destinationCenterX<screen[0]/2?lp.width/2+margin:screen[0]-lp.width/2-margin;
         long down = SystemClock.uptimeMillis(); event(v, down, MotionEvent.ACTION_DOWN, startX, startY);
         event(v, down, MotionEvent.ACTION_MOVE, destinationCenterX, destinationCenterY);
         int x = lp.x, y = lp.y;
@@ -196,10 +203,10 @@ public final class V16ServiceBubbleChecks {
         }
         event(v, down, MotionEvent.ACTION_UP, destinationCenterX, destinationCenterY);
         check(AssistService.isAssistArmed(), "drag must preserve assistance state");
-        check(bubbleLayout(service).width == Math.round(4 * v.getResources().getDisplayMetrics().density)
+        check(bubbleLayout(service).width == Math.round(20 * v.getResources().getDisplayMetrics().density)
                         && bubbleLayout(service).height == Math.round(120 * v.getResources().getDisplayMetrics().density)
                         && v.isCollapsed(),
-                "release must apply the deferred height preference while collapsing visible width to4dp");
+                "release must apply the deferred height preference while collapsing visible width to20dp");
         lp=bubbleLayout(service);down=SystemClock.uptimeMillis();
         float expandX=lp.x+lp.width/2f,expandY=lp.y+lp.height/2f;
         event(v,down,MotionEvent.ACTION_DOWN,expandX,expandY);event(v,down,MotionEvent.ACTION_UP,expandX,expandY);
