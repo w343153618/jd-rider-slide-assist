@@ -23,6 +23,7 @@
         </activity>
         <activity android:name="com.example.slideassist.SpeedTestActivity" android:exported="false" />
         <activity android:name="com.example.slideassist.ReactionTestActivity" android:exported="false" />
+        <activity android:name="com.example.slideassist.KeywordTestActivity" android:exported="false" />
         <provider android:name="com.example.slideassist.UpdateApkProvider"
             android:authorities="${applicationId}.updates"
             android:exported="false"

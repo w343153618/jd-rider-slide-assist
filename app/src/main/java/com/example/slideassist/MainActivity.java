@@ -83,6 +83,10 @@ public final class MainActivity extends Activity {
         Button reactionTest = button("找字反应测试 · 随机订单", true);
         reactionTest.setOnClickListener(v -> startActivity(new Intent(this, ReactionTestActivity.class)));
         addTop(page, reactionTest, 8);
+        Button keywordTest = button("关键词提醒模拟 · 手动抢单", true);
+        keywordTest.setTag("keyword_alert_entry");
+        keywordTest.setOnClickListener(v -> startActivity(new Intent(this, KeywordTestActivity.class)));
+        addTop(page, keywordTest, 8);
         addTop(page, text("可手动拖动测速、查看轨迹慢放和逐点数据；只有点击开始记录后才采集本工具内的数据。", 13, MUTED, false), 6);
 
         LinearLayout bubbleSettings = card();

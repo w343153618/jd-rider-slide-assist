@@ -30,12 +30,14 @@ public final class GestureInstrumentation extends Instrumentation {
     private String pendingTest;
     private boolean lifecycleTest, v14Test, v15Sliders, v15Main, v15Reaction, unbufferedFixture, v16Bubble, v16ServiceBubble;
     private String v18Edge, v19Edge;
+    private boolean v110Keyword;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); v19Edge = arguments.getString("v19edge"); v18Edge = arguments.getString("v18edge"); v16ServiceBubble = arguments.getString("v16servicebubble") != null; v16Bubble = arguments.getString("v16bubble") != null; unbufferedFixture = arguments.getString("unbuffered") != null; v15Main = arguments.getString("v15main") != null; v15Reaction = arguments.getString("v15reaction") != null; v15Sliders = arguments.getString("v15sliders") != null; v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); v110Keyword = arguments.getString("v110keyword") != null; v19Edge = arguments.getString("v19edge"); v18Edge = arguments.getString("v18edge"); v16ServiceBubble = arguments.getString("v16servicebubble") != null; v16Bubble = arguments.getString("v16bubble") != null; unbufferedFixture = arguments.getString("unbuffered") != null; v15Main = arguments.getString("v15main") != null; v15Reaction = arguments.getString("v15reaction") != null; v15Sliders = arguments.getString("v15sliders") != null; v14Test = arguments.getString("v14") != null; lifecycleTest = arguments.getString("lifecycle") != null; publishTest = arguments.getString("publish") != null; pendingTest = arguments.getString("pending"); updateTest = arguments.getString("update") != null; volumeTest = arguments.getString("volume") != null; bubbleTest = arguments.getString("bubble") != null; serviceTest = arguments.getString("service") != null; emulatorHardware = "hardware".equals(arguments.getString("service")) || "hardware".equals(arguments.getString("bubble")); start(); }
 
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if (v110Keyword) { V110KeywordAlertChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
             if (v19Edge != null) { V19EdgeDragChecks.run(this,result,"service".equals(v19Edge)); finish(Activity.RESULT_OK,result); return; }
             if (v18Edge != null) { if ("service".equals(v18Edge)) V18EdgeCollapseChecks.runService(this,result); else V18EdgeCollapseChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
             if (v16ServiceBubble) { V16ServiceBubbleChecks.run(this,result); finish(Activity.RESULT_OK,result); return; }
