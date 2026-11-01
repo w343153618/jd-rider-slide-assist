@@ -26,7 +26,7 @@ API37、1080×1920、density480、默认字体。只使用虚构订单与独立f
 adb shell am instrument -w -e v110keyword 1 com.example.slideassist.testfixture.test/com.example.slideassist.GestureInstrumentation
 ```
 
-正常系统动画和系统animator_duration_scale=0各运行一次，均通过；外层测试保存并在finally恢复原设置（当次原键不存在，恢复删除该键）。用例检查：
+正常系统动画和系统animator_duration_scale=0各运行一次，均通过；外层测试保存并在finally恢复原设置（当次原键不存在，恢复删除该键）。收尾进一步发现此模拟器仅删除键后运行时仍保留静态动画状态；后续恢复实际动态效果的处理与验证见下文。用例检查：
 
 - 入口、默认关闭、显式开启；三个简称、全批无命中、自身规则标签不误触发。
 - 唯一命中在第五单之后、可见订单文字无关键词时仍提醒；滚到底部返回按钮仍可见。
@@ -40,7 +40,17 @@ adb shell am instrument -w -e v110keyword 1 com.example.slideassist.testfixture.
 
 ## 发布与升级
 
-发布产物版本为1.10.0/code14，APK为1018986字节，SHA-256为`860c9c70e93f863c5008aeaae151b34c34deeae7ca896f02d9a0b58a67be2486`；正式签名证书SHA-256仍为`de508e5c22cb49ff0577afee5933d7197de1b4d9154fae9bd8768885af9999e7`。发布回读和正式App升级结果在实际完成后补记。
+发布产物版本为1.10.0/code14，APK为1018986字节，SHA-256为`860c9c70e93f863c5008aeaae151b34c34deeae7ca896f02d9a0b58a67be2486`；正式签名证书SHA-256仍为`de508e5c22cb49ff0577afee5933d7197de1b4d9154fae9bd8768885af9999e7`。
+
+[v1.10.0正式Release](https://github.com/w343153618/jd-rider-slide-assist/releases/tag/v1.10.0)固定提交`b4be33e8fc6910865f4b1c606c237dff06cf60b1`。当次gh/API重新核对账号及公开仓库ADMIN权限，推送main和固定标签；发布后回读非草稿/非预发布且为latest，三个资产完整。重新从GitHub下载APK、SHA256、update.json与本地逐字节相同，APK摘要与资产digest一致。旧标签与二进制保留。一次发布请求因缩写target_commitish被GitHub拒绝，改用完整提交SHA后成功，没有重打标签或替换旧资产。
+
+正式1.9.0/code13经本应用“检查更新 / 升级”实际查询GitHub，显示1.10.0及说明；下载后本应用报告摘要、包名、递增版本及同签名校验通过，随后经Android系统Update确认升级。PackageManager和首页均核实为1.10.0/code14，未以adb覆盖代替正式升级。安装后首页计时浮窗持续更新导致一次UIAutomator无法取得空闲状态，未复用旧XML；改由新截图与PackageManager确认，再进入无计时干扰的关键词页读取新鲜层级。
+
+正式包现场第一批8单命中南理工，开启提醒后仍可从白色手柄手动完成第一单，状态累计1次并复位；再下拉换成新批，订单文字和批次随之更新。源码、固定Release、应用内升级和正式包页面分别核对，未把测试夹具的成功替代正式升级结果。
+
+收尾移除本次fixtureCheck及其测试APK，PackageManager只保留正式App；无障碍仍为null/0，动画比例恢复原来的未设定状态，adb为普通uid2000 shell。模拟器保留正式版关键词页供体验；截图和4秒实际呼吸录屏只在本地产物中。
+
+录屏复核没有仅检查文件存在：初次录屏只有一帧，连续四次屏幕像素均为静态12%轻红。定位为关闭动画测试后，删除原本不存在的动画比例键仍留下模拟器运行时的关闭状态。临时写回1后再删除恢复原键不存在，并关闭/开启本页提醒；连续四次实际屏幕像素重新变化，证明恢复了动态显示。此处修正的是测试环境恢复，没有修改正式App或重打版本标签。后续同类设置测试应同时核对保存值和运行时显示，不能只以settings返回null认定完全恢复。
 
 ## 物理与客户端边界
 
