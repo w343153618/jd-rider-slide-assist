@@ -26,13 +26,15 @@ public final class KeywordOrderGenerator {
     public static Batch generate(long seed, Batch previous) {
         Random random = new Random(seed);
         int count = 6 + random.nextInt(3);
-        List<Integer> destinations = new ArrayList<>(count);
-        for (int index = 0; index < count; index++) destinations.add(index);
-        Collections.shuffle(destinations, random);
         String[] schools = new String[count];
-        int destination = 0;
         for (String keyword : KeywordMatcher.keywords()) {
-            if (random.nextDouble() < .35) schools[destinations.get(destination++)] = keyword;
+            if (random.nextDouble() >= .35) continue;
+            int first = random.nextInt(count);
+            int copies = 1 + random.nextInt(2);
+            for (int copy = 0; copy < copies; copy++) {
+                int destination = copy == 0 ? first : (first + 1 + random.nextInt(count - 1)) % count;
+                schools[destination] = schools[destination] == null ? keyword : schools[destination] + " / " + keyword;
+            }
         }
         List<Order> orders = new ArrayList<>(count);
         for (int index = 0; index < count; index++) {
@@ -65,7 +67,7 @@ public final class KeywordOrderGenerator {
     }
 
     private static String schoolAddress(String school, String gate, String address) {
-        return school == null ? address : school + "示例校区" + gate + " · " + address;
+        return school == null ? address : "示例交接点：" + school + " · " + gate + " · " + address;
     }
 
     private static String pick(Random random, String[] values) { return values[random.nextInt(values.length)]; }

@@ -24,8 +24,6 @@ public final class KeywordOrderGeneratorTest {
                 check(!order.goods.isEmpty() && !order.note.isEmpty(), "goods and note remain usable display content");
                 check(KeywordMatcher.matchFragments(Arrays.asList(order.title, order.goods, order.note)).isEmpty(),
                         "school keywords are intentionally inserted only into addresses");
-                check(KeywordMatcher.matchFragments(Arrays.asList(order.address)).size() <= 1,
-                        "one synthetic destination must not combine unrelated school names");
                 allText.add(order.title); allText.add(order.address); allText.add(order.goods); allText.add(order.note);
                 titleLengths.add(order.title.length()); addressLengths.add(order.address.length()); noteLengths.add(order.note.length());
                 if (index >= 5 && !KeywordMatcher.matchFragments(Arrays.asList(order.address)).isEmpty()) sawLateKeyword = true;
@@ -47,7 +45,56 @@ public final class KeywordOrderGeneratorTest {
         sameSeedRefreshIsStillFresh();
         batchIsImmutable();
         seedReconstructsTheSameInitialBatch();
+        multipleMatchesCanShareOneOrderOrSpanOrders();
         System.out.println("KeywordOrderGeneratorTest passed");
+    }
+
+    /** The color-reminder practice needs both same-order and separate-order examples. */
+    private static void multipleMatchesCanShareOneOrderOrSpanOrders() {
+        String[] schools = {"南邮", "南航", "南理工"};
+        boolean sawTwoInOne = false, sawThreeInOne = false, sawSeveralOrders = false;
+        boolean[] sawSchoolAlone = new boolean[schools.length];
+        boolean[] sawSchoolInSeveralOrders = new boolean[schools.length];
+        for (long seed = 0; seed < 4096; seed++) {
+            KeywordOrderGenerator.Batch batch = KeywordOrderGenerator.generate(seed, null);
+            boolean[] present = new boolean[schools.length];
+            int[] destinations = new int[schools.length];
+            int matchingOrders = 0;
+            for (KeywordOrderGenerator.Order order : batch.orders) {
+                int matches = 0;
+                // Literal expectation is independent of the production matching helper.
+                for (int school = 0; school < schools.length; school++) {
+                    if (order.address.contains(schools[school])) {
+                        matches++;
+                        present[school] = true;
+                        destinations[school]++;
+                        int first = order.address.indexOf(schools[school]);
+                        check(order.address.indexOf(schools[school], first + schools[school].length()) < 0,
+                                "the same school must not be duplicated within one address");
+                    }
+                }
+                if (matches > 0) matchingOrders++;
+                if (matches == 2) sawTwoInOne = true;
+                if (matches == 3) sawThreeInOne = true;
+            }
+            if (matchingOrders > 1) sawSeveralOrders = true;
+            for (int school = 0; school < schools.length; school++) {
+                check(destinations[school] <= 2, "a selected school is placed in at most two distinct orders");
+                if (destinations[school] == 2) sawSchoolInSeveralOrders[school] = true;
+            }
+            int distinct = 0;
+            for (boolean found : present) if (found) distinct++;
+            if (distinct == 1) {
+                for (int school = 0; school < schools.length; school++) {
+                    if (present[school]) sawSchoolAlone[school] = true;
+                }
+            }
+        }
+        for (boolean found : sawSchoolInSeveralOrders) check(found, "every school must be able to match several orders in one batch");
+        check(sawTwoInOne, "random practice must include two school keywords in one order");
+        check(sawThreeInOne, "random practice must include all three school keywords in one order");
+        check(sawSeveralOrders, "random practice must also include several separately matching orders");
+        for (boolean found : sawSchoolAlone) check(found, "every school must also occur without the other two");
     }
 
     private static void sameSeedRefreshIsStillFresh() {
