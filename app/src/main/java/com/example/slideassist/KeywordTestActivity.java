@@ -8,6 +8,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.text.TextUtils;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -15,12 +18,16 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /** Local loaded-batch reminders. Every order slider is physical/manual; no OCR is claimed. */
 public final class KeywordTestActivity extends Activity {
     private static final int INK = Color.rgb(35, 39, 42), MUTED = Color.rgb(96, 100, 101);
     private final List<ManualSpeedSliderView> sliders = new ArrayList<>();
+    private final List<List<String>> matchesByOrder = new ArrayList<>();
+    private final List<KeywordOrderMarkerView> markers = new ArrayList<>();
+    private final List<TextView> orderTexts = new ArrayList<>();
     private KeywordOrderGenerator.Batch batch;
     private List<String> hits = new ArrayList<>();
     private boolean monitoringEnabled, resumed;
@@ -29,7 +36,6 @@ public final class KeywordTestActivity extends Activity {
     private PullRefreshScrollView scroll;
     private TextView status, pullHint;
     private Button toggle;
-    private RedBreathingView reminder;
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -52,12 +58,12 @@ public final class KeywordTestActivity extends Activity {
         host.addView(page, new FrameLayout.LayoutParams(-1, -1));
         LinearLayout navigation = new LinearLayout(this);
         navigation.setGravity(Gravity.CENTER_VERTICAL);
-        navigation.addView(text("关键词提醒模拟", 19, INK, true), new LinearLayout.LayoutParams(0, -2, 1));
+        navigation.addView(text("订单关键词标记", 19, INK, true), new LinearLayout.LayoutParams(0, -2, 1));
         Button back = button("返回模拟抢单");
         back.setOnClickListener(v -> finish());
         navigation.addView(back, new LinearLayout.LayoutParams(dp(140), dp(48)));
         page.addView(navigation, new LinearLayout.LayoutParams(-1, dp(52)));
-        toggle = button("开启关键词提醒");
+        toggle = button("开启颜色标记");
         toggle.setTag("keyword_alert_toggle");
         toggle.setOnClickListener(v -> {
             monitoringEnabled = !monitoringEnabled;
@@ -68,8 +74,7 @@ public final class KeywordTestActivity extends Activity {
         status.setTag("keyword_alert_status");
         status.setMinHeight(dp(46));
         add(page, status, 4);
-        add(page, text("关键词：南邮 / 南航 / 南理工\n检查整批订单（含屏幕外），请自行拖动抢单。", 12, MUTED, false), 2);
-        add(page, text("红色缓慢呼吸，可随时关闭；对闪光敏感请关闭。", 12, MUTED, false), 2);
+        add(page, text(highlighted("南邮（红） / 南航（绿） / 南理工（蓝）\n整批含屏幕外；颜色只标对应订单，不闪屏。"), 12, MUTED, false), 2);
         pullHint = text("列表顶部下拉换一批 · 6～8张虚构订单", 12, MUTED, false);
         add(page, pullHint, 4);
         scroll = new PullRefreshScrollView(this);
@@ -87,9 +92,6 @@ public final class KeywordTestActivity extends Activity {
             }
             @Override public void onRefresh() { refreshBatch(SystemClock.elapsedRealtimeNanos()); }
         });
-        reminder = new RedBreathingView(this);
-        reminder.setTag("keyword_alert_overlay");
-        host.addView(reminder, new FrameLayout.LayoutParams(-1, -1));
         setContentView(host);
         monitoringEnabled = saved != null && saved.getBoolean("monitoring", false);
         batchNumber = saved == null ? 0 : saved.getInt("batchNumber", 1);
@@ -113,27 +115,50 @@ public final class KeywordTestActivity extends Activity {
 
     private void showBatch() {
         sliders.clear();
+        matchesByOrder.clear();
+        markers.clear();
+        orderTexts.clear();
         orders.removeAllViews();
         List<CharSequence> fragments = new ArrayList<>();
         int textIndex = 0;
         for (int index = 0; index < batch.orders.size(); index++) {
+            final int orderNumber = index + 1;
             KeywordOrderGenerator.Order order = batch.orders.get(index);
+            FrameLayout cardHost = new FrameLayout(this);
+            cardHost.setTag("keyword_order_card_" + index);
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setPadding(dp(12), dp(10), dp(12), dp(12));
             GradientDrawable background = new GradientDrawable();
             background.setColor(Color.WHITE); background.setCornerRadius(dp(10));
-            card.setBackground(background);
-            add(orders, card, 8);
-            TextView state = text("模拟订单 " + (index + 1) + " · 待手动拖动", 12, MUTED, false);
+            cardHost.setBackground(background);
+            cardHost.addView(card, new FrameLayout.LayoutParams(-1, -2));
+            add(orders, cardHost, 8);
+            TextView state = text("模拟订单 " + orderNumber + " · 待手动拖动", 12, MUTED, false);
             card.addView(state);
             String[] values = {order.title, order.address, order.goods, order.note};
+            List<String> orderHits = KeywordMatcher.matchFragments(Arrays.asList(values));
+            matchesByOrder.add(orderHits);
+            KeywordOrderMarkerView marker = new KeywordOrderMarkerView(this);
+            marker.setColors(KeywordAlertPalette.colorsFor(orderHits));
+            marker.setTag("keyword_order_marker_" + index);
+            FrameLayout.LayoutParams markerSize = new FrameLayout.LayoutParams(dp(5), -1, Gravity.LEFT);
+            markerSize.topMargin = dp(10); markerSize.bottomMargin = dp(10);
+            cardHost.addView(marker, markerSize);
+            markers.add(marker);
+            List<String> labels = new ArrayList<>();
+            for (String key : orderHits) labels.add(key + "（" + KeywordAlertPalette.colorLabel(key) + "）");
+            TextView matchLabels = text(labels.isEmpty() ? "本单未命中" : TextUtils.join(" · ", labels), 12, MUTED, true);
+            matchLabels.setTag("keyword_order_matches_" + index);
+            add(card, matchLabels, 4);
+            orderTexts.add(matchLabels);
             for (int field = 0; field < values.length; field++) {
                 fragments.add(values[field]);
                 TextView value = text((field == 3 ? "备注：" : "") + values[field], field < 2 ? 15 : 12,
                         field < 2 ? INK : MUTED, field == 0);
                 value.setTag("keyword_order_text_" + textIndex++);
                 add(card, value, field < 2 ? 7 : 4);
+                orderTexts.add(value);
             }
             ManualSpeedSliderView slider = new ManualSpeedSliderView(this);
             slider.setTag("keyword_order_slider_" + index);
@@ -141,7 +166,7 @@ public final class KeywordTestActivity extends Activity {
             slider.setOnAttemptFinished(() -> {
                 ManualSpeedSliderView.AttemptInfo attempt = slider.getLastAttempt();
                 if (attempt != null && "success".equals(attempt.outcome)) completed[0]++;
-                state.setText("手动完成 " + completed[0] + " 次 · 抬手后0.2秒复位");
+                state.setText("模拟订单 " + orderNumber + " · 手动完成 " + completed[0] + " 次");
             });
             LinearLayout.LayoutParams sliderSize = new LinearLayout.LayoutParams(-1, dp(56));
             sliderSize.topMargin = dp(10); card.addView(slider, sliderSize);
@@ -152,21 +177,35 @@ public final class KeywordTestActivity extends Activity {
     }
 
     private void updateReminder() {
-        if (reminder == null || batch == null) return;
-        boolean active = monitoringEnabled && resumed && !hits.isEmpty();
-        reminder.setAlerting(active);
-        toggle.setText(monitoringEnabled ? "关闭关键词提醒" : "开启关键词提醒");
-        toggle.setContentDescription(monitoringEnabled ? "关闭关键词提醒，滑条始终手动操作" : "开启关键词提醒，滑条始终手动操作");
-        status.setText("第" + batchNumber + "批 · " + batch.orders.size() + "单 · 提醒"
-                + (monitoringEnabled ? "已开启" : "已关闭") + "\n"
-                + (hits.isEmpty() ? "本批未命中" : "命中：" + TextUtils.join("、", hits)));
+        if (batch == null) return;
+        boolean active = monitoringEnabled && resumed;
+        for (KeywordOrderMarkerView marker : markers) marker.setMarked(active);
+        for (TextView value : orderTexts) {
+            String raw = value.getText().toString();
+            value.setText(active ? highlighted(raw) : raw);
+        }
+        toggle.setText(monitoringEnabled ? "关闭颜色标记" : "开启颜色标记");
+        toggle.setContentDescription(monitoringEnabled ? "关闭颜色标记，滑条始终手动操作" : "开启颜色标记，滑条始终手动操作");
+        StringBuilder summary = new StringBuilder("第" + batchNumber + "批 · " + batch.orders.size() + "单 · 标记"
+                + (monitoringEnabled ? "已开启" : "已关闭"));
+        if (hits.isEmpty()) summary.append("\n本批未命中");
+        for (String key : hits) {
+            summary.append('\n').append(key).append("（").append(KeywordAlertPalette.colorLabel(key)).append("）：第");
+            boolean first = true;
+            for (int index = 0; index < matchesByOrder.size(); index++) if (matchesByOrder.get(index).contains(key)) {
+                if (!first) summary.append('、');
+                summary.append(index + 1); first = false;
+            }
+            summary.append('单');
+        }
+        status.setText(active ? highlighted(summary.toString()) : summary.toString());
     }
 
     private void resetSliders() { for (ManualSpeedSliderView slider : sliders) slider.reset(); }
     @Override protected void onResume() { super.onResume(); resumed = true; updateReminder(); }
     @Override protected void onPause() {
         resumed = false;
-        if (reminder != null) reminder.setAlerting(false);
+        updateReminder();
         resetSliders();
         super.onPause();
     }
@@ -178,7 +217,15 @@ public final class KeywordTestActivity extends Activity {
     }
     @Override public Object onRetainNonConfigurationInstance() { return batch; }
 
-    private TextView text(String value, int size, int color, boolean bold) {
+    private CharSequence highlighted(String value) {
+        SpannableStringBuilder styled = new SpannableStringBuilder(value);
+        for (String key : KeywordMatcher.keywords())
+            for (int at = value.indexOf(key); at >= 0; at = value.indexOf(key, at + key.length()))
+                styled.setSpan(new ForegroundColorSpan(KeywordAlertPalette.textColorFor(key)), at, at + key.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        return styled;
+    }
+
+    private TextView text(CharSequence value, int size, int color, boolean bold) {
         TextView result = new TextView(this); result.setText(value); result.setTextSize(size); result.setTextColor(color);
         if (bold) result.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return result;
